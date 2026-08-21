@@ -39,6 +39,10 @@ export function canAccessBaby(user: User, babyId: string) {
   return user.role === 'admin' || user.allowedBabyIds.includes(babyId);
 }
 
+export function canEditEvent(user: User, event: BabyEvent) {
+  return canAccessBaby(user, event.babyId) && (user.role === 'admin' || event.createdBy === user.id);
+}
+
 export async function createEvent(store: Store, input: EventInput, actor: User, channel: BabyEvent['channel'] = 'pwa') {
   validateEventDetails(input);
   if (!canAccessBaby(actor, input.babyId)) throw new Error('You do not have access to that baby');

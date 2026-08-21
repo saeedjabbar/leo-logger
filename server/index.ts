@@ -11,7 +11,7 @@ import type { AuthenticatorTransportFuture } from '@simplewebauthn/server';
 import { createStore } from './store.js';
 import { authMiddleware, issueSession, logout, publicUser, requireAdmin, requireUser } from './auth.js';
 import { hashSecret, verifySecret } from './security.js';
-import { eventInputSchema, createEvent, reviseEvent, canAccessBaby, validateEventDetails } from './events.js';
+import { eventInputSchema, createEvent, reviseEvent, canAccessBaby, canEditEvent, validateEventDetails } from './events.js';
 import { calculateInsights } from './analytics.js';
 import { importHuckleberry } from './importer.js';
 import type { Baby, BabyEvent, Challenge, Passkey, PushSubscriptionRecord, Session, User } from './types.js';
@@ -284,6 +284,29 @@ app.post('/api/chat', requireUser, async (request, response) => {
   response.json({ reply: result.reply, events: created, clarificationNeeded: result.clarificationNeeded, provider, aiConfigured: azureChatConfigured() });
 });
 
+app.get('/api/insights/ai', requireUser, async (request, response) => {
+  const user = request.currentUser!;
+  const babyId = String(request.query.babyId || user.defaultBabyId || '');
+  if (!canAccessBaby(user, babyId)) return response.status(403).json({ error: 'Access denied' });
+  const baby = await store.get<Baby>('babies', babyId);
+  if (!baby?.active) return response.status(404).json({ error: 'Baby not found' });
+  const events = await store.list<BabyEvent>('events');
+  let insight: string;
+  let provider: 'azure-openai' | 'built-in' = 'azure-openai';
+  try {
+    const result = await interpretWithAzure('Give the family a warm, factual summary of the last 7 days in at most 3 short sentences. Mention useful feeding, diaper, or sleep patterns only when supported by the data. Do not log an activity and do not give medical advice.', baby, events);
+    insight = result.reply;
+  } catch (error) {
+    provider = 'built-in';
+    console.error(JSON.stringify({ level: 'warn', message: `AI family insight unavailable: ${(error as Error).message}` }));
+    const now = new Date();
+    const stats = calculateInsights(events, baby.id, new Date(now.getTime() - 7 * 86_400_000), now, baby.timezone);
+    insight = `Over the last 7 days: ${stats.totals.feeds} feeds totaling ${stats.totals.ounces} oz, ${stats.totals.wet} wet diapers, ${stats.totals.dirty} dirty diapers, and ${stats.totals.sleepHours} hours of logged sleep.`;
+  }
+  response.setHeader('Cache-Control', 'private, no-store');
+  response.json({ insight, provider, generatedAt: new Date().toISOString() });
+});
+
 app.post('/api/transcribe', requireUser, express.raw({ type: 'audio/wav', limit: '4mb' }), async (request, response) => {
   if (!azureSpeechConfigured()) return response.status(503).json({ error: 'Voice transcription is not configured' });
   try {
@@ -301,12 +324,12 @@ app.post('/api/events', requireUser, async (request, response) => {
 
 app.patch('/api/events/:id', requireUser, async (request, response) => {
   const event = await store.get<BabyEvent>('events', String(request.params.id));
-  if (!event) return response.status(404).json({ error: 'Event not found' });
-  const parsed = eventInputSchema.partial().safeParse(request.body);
+  if (!event || event.deletedAt) return response.status(404).json({ error: 'Event not found' });
+  const parsed = eventInputSchema.pick({ startAt: true, endAt: true, feed: true, diaper: true, notes: true }).partial().safeParse(request.body);
   if (!parsed.success) return response.status(400).json({ error: parsed.error.issues[0]?.message || 'Invalid event' });
   const isCaregiverWake = request.currentUser!.role === 'caregiver' && event.type === 'sleep' && !event.endAt &&
     Object.keys(parsed.data).every((key) => key === 'endAt') && parsed.data.endAt && canAccessBaby(request.currentUser!, event.babyId);
-  if (request.currentUser!.role !== 'admin' && !isCaregiverWake) return response.status(403).json({ error: 'Admin access required' });
+  if (!canEditEvent(request.currentUser!, event) && !isCaregiverWake) return response.status(403).json({ error: 'You can only edit entries you logged' });
   const updated = { ...event, ...parsed.data, feed: parsed.data.feed || event.feed, updatedAt: new Date().toISOString() };
   try { validateEventDetails(updated); } catch (error) { return response.status(400).json({ error: (error as Error).message }); }
   await reviseEvent(store, event, request.currentUser!, 'update');
