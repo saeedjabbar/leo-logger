@@ -1,5 +1,5 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
-import { Baby as BabyIcon, BedDouble, Bell, BellOff, Droplets, MessageCircle, Mic, Milk, Pencil, Settings, Sparkles } from 'lucide-react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Baby as BabyIcon, BedDouble, Bell, BellOff, Droplets, MessageCircle, Mic, Milk, Pencil, RefreshCw, Settings, Sparkles } from 'lucide-react';
 import { api } from '../api';
 import { flushEvents, queueEvent } from '../offline';
 import type { Baby, BabyEvent, User } from '../types';
@@ -56,6 +56,9 @@ export default function Logger({ user, babies, initialSleep, onAdmin, onLogout }
   const [familyInsight, setFamilyInsight] = useState('');
   const [insightBusy, setInsightBusy] = useState(false);
   const [insightError, setInsightError] = useState('');
+  const [pullDistance, setPullDistance] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
+  const pullStart = useRef<number | undefined>(undefined);
   const baby = babies.find((item) => item.id === babyId);
   const recent = useMemo(() => events.slice(0, 8), [events]);
   const latestFeed = useMemo(() => events.find((event) => event.type === 'feed'), [events]);
@@ -118,6 +121,28 @@ export default function Logger({ user, babies, initialSleep, onAdmin, onLogout }
     finally { setInsightBusy(false); }
   }
 
+  function startPull(event: React.TouchEvent<HTMLElement>) {
+    if (window.scrollY <= 0 && !refreshing) pullStart.current = event.touches[0]?.clientY;
+  }
+
+  function movePull(event: React.TouchEvent<HTMLElement>) {
+    if (pullStart.current === undefined || window.scrollY > 0) return;
+    const distance = (event.touches[0]?.clientY || 0) - pullStart.current;
+    if (distance <= 0) return setPullDistance(0);
+    event.preventDefault();
+    setPullDistance(Math.min(96, distance * .45));
+  }
+
+  async function finishPull() {
+    const shouldRefresh = pullDistance >= 64;
+    pullStart.current = undefined; setPullDistance(0);
+    if (!shouldRefresh || refreshing) return;
+    setRefreshing(true);
+    try { await refresh(); setNotice('Everything is up to date'); }
+    catch { setNotice('Could not refresh. Check your connection and try again.'); }
+    finally { setRefreshing(false); }
+  }
+
   async function log(input: Record<string, unknown>, label: string) {
     if (!babyId) return;
     setBusy(true); setNotice('');
@@ -148,7 +173,8 @@ export default function Logger({ user, babies, initialSleep, onAdmin, onLogout }
     catch (reason) { setNotice((reason as Error).message); }
   }
 
-  return <main className="safe-top safe-bottom mx-auto min-h-dvh max-w-xl px-4">
+  return <main className="safe-top safe-bottom mx-auto min-h-dvh max-w-xl overscroll-y-contain px-4" onTouchStart={startPull} onTouchMove={movePull} onTouchEnd={finishPull} onTouchCancel={() => { pullStart.current = undefined; setPullDistance(0); }}>
+    <div className="grid place-items-center overflow-hidden text-sm font-bold text-[#4f7b68] transition-[height]" style={{ height: refreshing ? 52 : pullDistance }} aria-live="polite"><span className="flex items-center gap-2"><RefreshCw size={19} className={refreshing ? 'animate-spin' : ''} style={{ transform: refreshing ? undefined : `rotate(${Math.min(180, pullDistance * 3)}deg)` }} />{refreshing ? 'Refreshing…' : pullDistance >= 64 ? 'Release to refresh' : 'Pull to refresh'}</span></div>
     <header className="mb-5 flex items-center justify-between gap-3">
       <div><p className="text-sm font-bold uppercase tracking-widest text-[#4f7b68]">Hello, {user.displayName}</p><div className="mt-1 flex items-center gap-2"><BabyIcon className="text-[#d28a3c]" /><h1 className="text-3xl font-black">{baby?.name || 'Baby'}</h1></div></div>
       <div className="flex gap-2">{user.role === 'admin' ? <button onClick={onAdmin} className="grid size-12 place-items-center rounded-full bg-white shadow-sm" aria-label="Open admin dashboard"><Settings /></button> : null}<button onClick={onLogout} className="rounded-full bg-stone-100 px-4 font-bold">Sign out</button></div>
