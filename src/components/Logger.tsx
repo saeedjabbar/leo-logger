@@ -59,6 +59,7 @@ export default function Logger({ user, babies, initialSleep, onAdmin, onLogout }
   const [pullDistance, setPullDistance] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
   const pullStart = useRef<number | undefined>(undefined);
+  const pullDistanceRef = useRef(0);
   const baby = babies.find((item) => item.id === babyId);
   const recent = useMemo(() => events.slice(0, 8), [events]);
   const latestFeed = useMemo(() => events.find((event) => event.type === 'feed'), [events]);
@@ -128,14 +129,15 @@ export default function Logger({ user, babies, initialSleep, onAdmin, onLogout }
   function movePull(event: React.TouchEvent<HTMLElement>) {
     if (pullStart.current === undefined || window.scrollY > 0) return;
     const distance = (event.touches[0]?.clientY || 0) - pullStart.current;
-    if (distance <= 0) return setPullDistance(0);
+    if (distance <= 0) { pullDistanceRef.current = 0; return setPullDistance(0); }
     event.preventDefault();
-    setPullDistance(Math.min(96, distance * .45));
+    const nextDistance = Math.min(96, distance * .45);
+    pullDistanceRef.current = nextDistance; setPullDistance(nextDistance);
   }
 
   async function finishPull() {
-    const shouldRefresh = pullDistance >= 64;
-    pullStart.current = undefined; setPullDistance(0);
+    const shouldRefresh = pullDistanceRef.current >= 64;
+    pullStart.current = undefined; pullDistanceRef.current = 0; setPullDistance(0);
     if (!shouldRefresh || refreshing) return;
     setRefreshing(true);
     try { await refresh(); setNotice('Everything is up to date'); }
@@ -173,7 +175,7 @@ export default function Logger({ user, babies, initialSleep, onAdmin, onLogout }
     catch (reason) { setNotice((reason as Error).message); }
   }
 
-  return <main className="safe-top safe-bottom mx-auto min-h-dvh max-w-xl overscroll-y-contain px-4" onTouchStart={startPull} onTouchMove={movePull} onTouchEnd={finishPull} onTouchCancel={() => { pullStart.current = undefined; setPullDistance(0); }}>
+  return <main className="safe-top safe-bottom mx-auto min-h-dvh max-w-xl overscroll-y-contain px-4" onTouchStart={startPull} onTouchMove={movePull} onTouchEnd={finishPull} onTouchCancel={() => { pullStart.current = undefined; pullDistanceRef.current = 0; setPullDistance(0); }}>
     <div className="grid place-items-center overflow-hidden text-sm font-bold text-[#4f7b68] transition-[height]" style={{ height: refreshing ? 52 : pullDistance }} aria-live="polite"><span className="flex items-center gap-2"><RefreshCw size={19} className={refreshing ? 'animate-spin' : ''} style={{ transform: refreshing ? undefined : `rotate(${Math.min(180, pullDistance * 3)}deg)` }} />{refreshing ? 'Refreshing…' : pullDistance >= 64 ? 'Release to refresh' : 'Pull to refresh'}</span></div>
     <header className="mb-5 flex items-center justify-between gap-3">
       <div><p className="text-sm font-bold uppercase tracking-widest text-[#4f7b68]">Hello, {user.displayName}</p><div className="mt-1 flex items-center gap-2"><BabyIcon className="text-[#d28a3c]" /><h1 className="text-3xl font-black">{baby?.name || 'Baby'}</h1></div></div>
