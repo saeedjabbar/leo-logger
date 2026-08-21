@@ -391,7 +391,7 @@ app.delete('/api/events/:id', requireUser, async (request, response) => {
   if (!event || event.deletedAt) return response.status(404).json({ error: 'Event not found' });
   const user = request.currentUser!;
   const canUndo = event.createdBy === user.id && Date.now() - new Date(event.createdAt).getTime() <= 2 * 60_000;
-  if (user.role !== 'admin' && !canUndo) return response.status(403).json({ error: 'The undo window has expired' });
+  if (!canEditEvent(user, event)) return response.status(403).json({ error: 'You can only delete entries you logged' });
   await reviseEvent(store, event, user, canUndo ? 'undo' : 'delete');
   await store.put('events', event.id, { ...event, deletedAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
   publishBabyUpdate(event.babyId, 'deleted');

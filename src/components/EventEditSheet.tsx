@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Clock3, Save, X } from 'lucide-react';
+import { Clock3, Save, Trash2, X } from 'lucide-react';
 import { api } from '../api';
 import type { BabyEvent } from '../types';
 
@@ -16,7 +16,7 @@ function titleFor(event: BabyEvent) {
   return 'Edit activity';
 }
 
-export default function EventEditSheet({ event, onClose, onUpdated }: { event: BabyEvent; onClose: () => void; onUpdated: (event: BabyEvent) => void }) {
+export default function EventEditSheet({ event, onClose, onUpdated, onDeleted }: { event: BabyEvent; onClose: () => void; onUpdated: (event: BabyEvent) => void; onDeleted: (event: BabyEvent) => void }) {
   const [startAt, setStartAt] = useState(() => localDateTime(event.startAt));
   const [endAt, setEndAt] = useState(() => localDateTime(event.endAt));
   const [diaper, setDiaper] = useState(event.diaper || 'pee');
@@ -27,6 +27,7 @@ export default function EventEditSheet({ event, onClose, onUpdated }: { event: B
   const [notes, setNotes] = useState(event.notes || '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const total = Number(ounces);
   const hasSplit = formulaOunces !== '' || breastMilkOunces !== '';
   const split = Number(formulaOunces || 0) + Number(breastMilkOunces || 0);
@@ -51,6 +52,14 @@ export default function EventEditSheet({ event, onClose, onUpdated }: { event: B
     } catch (reason) { setError((reason as Error).message); setBusy(false); }
   }
 
+  async function remove() {
+    setBusy(true); setError('');
+    try {
+      await api.delete(`/api/events/${event.id}`);
+      onDeleted(event);
+    } catch (reason) { setError((reason as Error).message); setBusy(false); }
+  }
+
   return <div className="fixed inset-0 z-40 flex items-end bg-stone-900/40 md:items-center md:justify-center" role="dialog" aria-modal="true" aria-labelledby="edit-event-title" onClick={onClose}>
     <form className="safe-bottom max-h-[94dvh] w-full overflow-y-auto rounded-t-[2rem] bg-white p-5 md:max-w-xl md:rounded-[2rem]" onSubmit={save} onClick={(clickEvent) => clickEvent.stopPropagation()}>
       <div className="mx-auto mb-4 h-1.5 w-14 rounded-full bg-stone-200" />
@@ -67,6 +76,7 @@ export default function EventEditSheet({ event, onClose, onUpdated }: { event: B
       <label className="mt-5 block font-bold">Notes (optional)<textarea value={notes} onChange={(inputEvent) => setNotes(inputEvent.target.value)} maxLength={500} rows={3} className="mt-2 w-full rounded-2xl border-2 border-stone-200 p-3 outline-none focus:border-[#4f7b68]" placeholder="Anything else the family should know?" /></label>
       {error ? <p role="alert" className="mt-4 rounded-2xl bg-red-50 p-3 font-bold text-red-800">{error}</p> : null}
       <button disabled={!valid || busy} className="tap mt-6 flex w-full items-center justify-center gap-2 rounded-2xl bg-[#4f7b68] text-xl font-black text-white disabled:opacity-40"><Save />{busy ? 'Saving…' : 'Save changes'}</button>
+      {!confirmDelete ? <button type="button" onClick={() => setConfirmDelete(true)} disabled={busy} className="mt-3 flex min-h-14 w-full items-center justify-center gap-2 rounded-2xl font-black text-red-700 disabled:opacity-40"><Trash2 />Delete this entry</button> : <div className="mt-4 rounded-2xl bg-red-50 p-4"><p className="font-black text-red-900">Delete this entry?</p><p className="mt-1 text-sm text-red-800">It will disappear from the family activity and insights.</p><div className="mt-3 grid grid-cols-2 gap-2"><button type="button" onClick={() => setConfirmDelete(false)} disabled={busy} className="min-h-12 rounded-xl bg-white font-black">Keep it</button><button type="button" onClick={remove} disabled={busy} className="min-h-12 rounded-xl bg-red-700 px-3 font-black text-white disabled:opacity-40">{busy ? 'Deleting…' : 'Yes, delete'}</button></div></div>}
     </form>
   </div>;
 }
