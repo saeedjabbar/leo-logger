@@ -47,7 +47,7 @@ export async function sendDueFeedReminders(store: Store, now = new Date()) {
     dueBabies += 1;
     const eligible = subscriptions.filter((subscription) => {
       const user = userMap.get(subscription.userId);
-      return user?.active && (user.role === 'master_admin' || user.allowedBabyIds.includes(baby.id));
+      return user?.active && (user.role === 'admin' || user.allowedBabyIds.includes(baby.id));
     });
     const payload = JSON.stringify({
       title: `${baby.name}'s feeding is due`,

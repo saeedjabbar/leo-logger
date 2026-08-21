@@ -47,12 +47,25 @@ az containerapp secret set --name "$APP_NAME" --resource-group "$RESOURCE_GROUP"
 ENV_VARS=(
   "NODE_ENV=production" "PORT=3000" "STORE_MODE=azure" "AZURE_STORAGE_ACCOUNT=${STORAGE_ACCOUNT}"
   "AZURE_TABLE_NAME=leologger" "APP_ORIGIN=https://${FQDN}" "RP_ID=${FQDN}"
-  "BOOTSTRAP_ADMINS=admin@example.com:Admin"
+  "BOOTSTRAP_ADMINS=${BOOTSTRAP_ADMINS:-admin@example.com:Admin}"
   "BOOTSTRAP_PASSWORD=secretref:bootstrap-password" "SESSION_SECRET=secretref:session-secret"
-  "VAPID_PUBLIC_KEY=${VAPID_PUBLIC_KEY}" "VAPID_PRIVATE_KEY=secretref:vapid-private-key" "VAPID_SUBJECT=mailto:admin@example.com"
-  "ALEXA_USER_EMAIL=admin@example.com"
+  "VAPID_PUBLIC_KEY=${VAPID_PUBLIC_KEY}" "VAPID_PRIVATE_KEY=secretref:vapid-private-key" "VAPID_SUBJECT=${VAPID_SUBJECT:-mailto:admin@example.com}"
+  "ALEXA_USER_EMAIL=${ALEXA_USER_EMAIL:-admin@example.com}"
 )
 if [[ -n "${ALEXA_SKILL_ID:-}" ]]; then ENV_VARS+=("ALEXA_SKILL_ID=${ALEXA_SKILL_ID}"); fi
+if [[ -n "${AZURE_OPENAI_ENDPOINT:-}" && -n "${AZURE_OPENAI_DEPLOYMENT:-}" ]]; then
+  ENV_VARS+=("AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT}" "AZURE_OPENAI_DEPLOYMENT=${AZURE_OPENAI_DEPLOYMENT}")
+fi
+if [[ -n "${AZURE_SPEECH_ENDPOINT:-}" && -n "${AZURE_SPEECH_RESOURCE_ID:-}" ]]; then
+  ENV_VARS+=("AZURE_SPEECH_ENDPOINT=${AZURE_SPEECH_ENDPOINT}" "AZURE_SPEECH_RESOURCE_ID=${AZURE_SPEECH_RESOURCE_ID}")
+fi
+if [[ -n "${AZURE_OPENAI_RESOURCE_ID:-}" ]]; then
+  az role assignment create --assignee-object-id "$PRINCIPAL_ID" --assignee-principal-type ServicePrincipal --role "Cognitive Services OpenAI User" --scope "$AZURE_OPENAI_RESOURCE_ID" --output none
+  az role assignment create --assignee-object-id "$PRINCIPAL_ID" --assignee-principal-type ServicePrincipal --role "Cognitive Services User" --scope "$AZURE_OPENAI_RESOURCE_ID" --output none
+fi
+if [[ -n "${AZURE_SPEECH_RESOURCE_ID:-}" && "${AZURE_SPEECH_RESOURCE_ID:-}" != "${AZURE_OPENAI_RESOURCE_ID:-}" ]]; then
+  az role assignment create --assignee-object-id "$PRINCIPAL_ID" --assignee-principal-type ServicePrincipal --role "Cognitive Services User" --scope "$AZURE_SPEECH_RESOURCE_ID" --output none
+fi
 
 az containerapp ingress update --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" --target-port 3000 --output none
 az containerapp update --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" \

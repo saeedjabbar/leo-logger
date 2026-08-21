@@ -21,6 +21,6 @@ export default function App() {
 
   if (loading) return <main className="grid min-h-dvh place-items-center"><p className="text-xl font-black">Opening Leo Logger…</p></main>;
   if (!me) return <Login onLogin={onLogin} />;
-  if (adminOpen && me.user.role === 'master_admin') return <Suspense fallback={<main className="grid min-h-dvh place-items-center"><p className="font-black">Loading dashboard…</p></main>}><Admin currentUser={me.user} initialBabies={me.babies} onBack={() => setAdminOpen(false)} onChanged={refresh} /></Suspense>;
+  if (adminOpen && me.user.role === 'admin') return <Suspense fallback={<main className="grid min-h-dvh place-items-center"><p className="font-black">Loading dashboard…</p></main>}><Admin currentUser={me.user} initialBabies={me.babies} onBack={() => setAdminOpen(false)} onChanged={refresh} /></Suspense>;
   return <Logger user={me.user} babies={me.babies} initialSleep={me.activeSleep} onAdmin={() => setAdminOpen(true)} onLogout={logout} />;
 }

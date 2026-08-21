@@ -1,10 +1,10 @@
-export type Role = 'master_admin' | 'caregiver';
+export type Role = 'admin' | 'caregiver';
 export interface User { id: string; role: Role; displayName: string; email?: string; allowedBabyIds: string[]; defaultBabyId?: string; mustChangePassword?: boolean; active: boolean }
 export interface Baby { id: string; name: string; birthDate?: string; timezone: string; feedingIntervalMinutes: number; active: boolean }
 export interface BabyEvent {
   id: string; babyId: string; type: 'feed' | 'diaper' | 'sleep' | 'legacy_pump'; startAt: string; endAt?: string;
   feed?: { ounces?: number; source: 'formula' | 'breast_milk' | 'combo'; formulaOunces?: number; breastMilkOunces?: number };
-  diaper?: 'pee' | 'poop' | 'both'; notes?: string; createdBy: string; channel: 'pwa' | 'alexa' | 'import';
+  diaper?: 'pee' | 'poop' | 'both'; notes?: string; createdBy: string; channel: 'pwa' | 'alexa' | 'import' | 'chat' | 'voice';
   createdAt: string; updatedAt: string; importWarnings?: string[];
 }
 export interface MeResponse { user: User; babies: Baby[]; activeSleep?: BabyEvent }

@@ -1,8 +1,8 @@
-export type Role = 'master_admin' | 'caregiver';
+export type Role = 'admin' | 'caregiver';
 export type EventType = 'feed' | 'diaper' | 'sleep' | 'legacy_pump';
 export type FeedSource = 'formula' | 'breast_milk' | 'combo';
 export type DiaperType = 'pee' | 'poop' | 'both';
-export type EventChannel = 'pwa' | 'alexa' | 'import';
+export type EventChannel = 'pwa' | 'alexa' | 'import' | 'chat' | 'voice';
 
 export interface Baby {
   id: string;

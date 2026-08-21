@@ -52,7 +52,7 @@ export function requireUser(request: Request, response: Response, next: NextFunc
 
 export function requireAdmin(request: Request, response: Response, next: NextFunction) {
   if (!request.currentUser) return response.status(401).json({ error: 'Please sign in' });
-  if (request.currentUser.role !== 'master_admin') return response.status(403).json({ error: 'Admin access required' });
+  if (request.currentUser.role !== 'admin') return response.status(403).json({ error: 'Admin access required' });
   next();
 }
 

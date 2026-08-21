@@ -36,7 +36,7 @@ export function validateEventDetails(input: EventInput) {
 }
 
 export function canAccessBaby(user: User, babyId: string) {
-  return user.role === 'master_admin' || user.allowedBabyIds.includes(babyId);
+  return user.role === 'admin' || user.allowedBabyIds.includes(babyId);
 }
 
 export async function createEvent(store: Store, input: EventInput, actor: User, channel: BabyEvent['channel'] = 'pwa') {

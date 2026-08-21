@@ -1,6 +1,6 @@
 # Alexa setup
 
-The Azure endpoint validates Amazon's certificate signature, request timestamp, application ID, and request ID. Voice entries are attributed to Admin and use his configured default baby.
+The Azure endpoint validates Amazon's certificate signature, request timestamp, application ID, and request ID. Voice entries are attributed to the admin configured with `ALEXA_USER_EMAIL` and use that account's default baby.
 
 1. Install and authenticate the ASK CLI: `npm install -g ask-cli`, then `ask configure`.
 2. Deploy this folder with `cd alexa && ask smapi create-skill-for-vendor -f skill-package/skill.json` or create a private custom skill in the Amazon Developer Console.

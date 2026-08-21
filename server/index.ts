@@ -16,6 +16,8 @@ import { calculateInsights } from './analytics.js';
 import { importHuckleberry } from './importer.js';
 import type { Baby, BabyEvent, Challenge, Passkey, PushSubscriptionRecord, Session, User } from './types.js';
 import { pushSubscriptionId, remindersConfigured, startReminderScheduler } from './reminders.js';
+import { azureChatConfigured, interpretFallback, interpretWithAzure, toEventInputs } from './chat.js';
+import { azureSpeechConfigured, transcribeWav } from './speech.js';
 
 const store = createStore();
 const app = express();
@@ -83,7 +85,15 @@ async function verifyAlexaRequest(request: express.Request) {
 
 async function bootstrap() {
   await store.initialize();
-  const users = await store.list<User>('users');
+  const storedUsers = await store.list<User>('users');
+  const users: User[] = [];
+  for (const user of storedUsers) {
+    if ((user.role as string) === 'master_admin') {
+      const migrated: User = { ...user, role: 'admin' };
+      await store.put('users', migrated.id, migrated);
+      users.push(migrated);
+    } else users.push(user);
+  }
   let babies = await store.list<Baby>('babies');
   if (!babies.length) {
     const leo: Baby = { id: randomUUID(), name: 'Leo', timezone: 'America/New_York', feedingIntervalMinutes: 120, active: true, createdAt: new Date().toISOString() };
@@ -103,7 +113,7 @@ async function bootstrap() {
     for (const entry of entries) {
       const [email, displayName] = entry.split(':');
       const user: User = {
-        id: randomUUID(), role: 'master_admin', email: email.toLowerCase(), displayName: displayName || email,
+        id: randomUUID(), role: 'admin', email: email.toLowerCase(), displayName: displayName || email,
         passwordHash: await hashSecret(password), allowedBabyIds: babies.map((baby) => baby.id), defaultBabyId: babies[0].id,
         mustChangePassword: true, active: true, createdAt: new Date().toISOString(),
       };
@@ -177,7 +187,7 @@ app.delete('/api/reminders/subscribe', requireUser, async (request, response) =>
   if (!parsed.success) return response.status(400).json({ error: 'Invalid notification subscription' });
   const id = pushSubscriptionId(parsed.data.endpoint);
   const subscription = await store.get<PushSubscriptionRecord>('pushSubscriptions', id);
-  if (subscription?.userId === request.currentUser!.id || request.currentUser!.role === 'master_admin') await store.remove('pushSubscriptions', id);
+  if (subscription?.userId === request.currentUser!.id || request.currentUser!.role === 'admin') await store.remove('pushSubscriptions', id);
   response.json({ subscribed: false });
 });
 
@@ -250,6 +260,38 @@ app.get('/api/events', requireUser, async (request, response) => {
   response.json({ events, people: Object.fromEntries(users.map((person) => [person.id, person.displayName])) });
 });
 
+app.post('/api/chat', requireUser, async (request, response) => {
+  const parsed = z.object({ babyId: z.string().uuid(), message: z.string().trim().min(2).max(1000), inputMode: z.enum(['chat', 'voice']).default('chat') }).safeParse(request.body);
+  if (!parsed.success) return response.status(400).json({ error: 'Enter a message for an allowed baby' });
+  const user = request.currentUser!;
+  if (!canAccessBaby(user, parsed.data.babyId)) return response.status(403).json({ error: 'Access denied' });
+  const baby = await store.get<Baby>('babies', parsed.data.babyId);
+  if (!baby?.active) return response.status(404).json({ error: 'Baby not found' });
+  const events = await store.list<BabyEvent>('events');
+  let result;
+  let provider: 'azure-openai' | 'built-in' = 'azure-openai';
+  try { result = await interpretWithAzure(parsed.data.message, baby, events); }
+  catch (error) {
+    provider = 'built-in';
+    console.error(JSON.stringify({ level: 'warn', message: `AI interpretation unavailable: ${(error as Error).message}` }));
+    result = interpretFallback(parsed.data.message, baby);
+  }
+  const requestId = randomUUID();
+  const created: BabyEvent[] = [];
+  if (!result.clarificationNeeded) for (const input of toEventInputs(result, baby.id, requestId)) {
+    created.push(await createEvent(store, input, user, parsed.data.inputMode));
+  }
+  response.json({ reply: result.reply, events: created, clarificationNeeded: result.clarificationNeeded, provider, aiConfigured: azureChatConfigured() });
+});
+
+app.post('/api/transcribe', requireUser, express.raw({ type: 'audio/wav', limit: '4mb' }), async (request, response) => {
+  if (!azureSpeechConfigured()) return response.status(503).json({ error: 'Voice transcription is not configured' });
+  try {
+    const transcript = await transcribeWav(request.body as Buffer);
+    response.json({ transcript });
+  } catch (error) { response.status(400).json({ error: (error as Error).message }); }
+});
+
 app.post('/api/events', requireUser, async (request, response) => {
   const parsed = eventInputSchema.safeParse(request.body);
   if (!parsed.success) return response.status(400).json({ error: parsed.error.issues[0]?.message || 'Invalid event' });
@@ -264,7 +306,7 @@ app.patch('/api/events/:id', requireUser, async (request, response) => {
   if (!parsed.success) return response.status(400).json({ error: parsed.error.issues[0]?.message || 'Invalid event' });
   const isCaregiverWake = request.currentUser!.role === 'caregiver' && event.type === 'sleep' && !event.endAt &&
     Object.keys(parsed.data).every((key) => key === 'endAt') && parsed.data.endAt && canAccessBaby(request.currentUser!, event.babyId);
-  if (request.currentUser!.role !== 'master_admin' && !isCaregiverWake) return response.status(403).json({ error: 'Admin access required' });
+  if (request.currentUser!.role !== 'admin' && !isCaregiverWake) return response.status(403).json({ error: 'Admin access required' });
   const updated = { ...event, ...parsed.data, feed: parsed.data.feed || event.feed, updatedAt: new Date().toISOString() };
   try { validateEventDetails(updated); } catch (error) { return response.status(400).json({ error: (error as Error).message }); }
   await reviseEvent(store, event, request.currentUser!, 'update');
@@ -277,7 +319,7 @@ app.delete('/api/events/:id', requireUser, async (request, response) => {
   if (!event || event.deletedAt) return response.status(404).json({ error: 'Event not found' });
   const user = request.currentUser!;
   const canUndo = event.createdBy === user.id && Date.now() - new Date(event.createdAt).getTime() <= 2 * 60_000;
-  if (user.role !== 'master_admin' && !canUndo) return response.status(403).json({ error: 'The undo window has expired' });
+  if (user.role !== 'admin' && !canUndo) return response.status(403).json({ error: 'The undo window has expired' });
   await reviseEvent(store, event, user, canUndo ? 'undo' : 'delete');
   await store.put('events', event.id, { ...event, deletedAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
   response.json({ ok: true });
@@ -313,7 +355,7 @@ app.patch('/api/admin/users/:id', requireAdmin, async (request, response) => {
   if (parsed.data.pin) for (const other of await store.list<User>('users')) {
     if (other.id !== user.id && other.pinHash && await verifySecret(parsed.data.pin, other.pinHash)) return response.status(409).json({ error: 'That PIN is already in use' });
   }
-  if (user.role === 'master_admin' && parsed.data.active === false && (await store.list<User>('users')).filter((item) => item.role === 'master_admin' && item.active).length <= 1) return response.status(400).json({ error: 'The final admin cannot be disabled' });
+  if (user.role === 'admin' && parsed.data.active === false && (await store.list<User>('users')).filter((item) => item.role === 'admin' && item.active).length <= 1) return response.status(400).json({ error: 'The final admin cannot be disabled' });
   const updated: User = { ...user, ...parsed.data, pinHash: parsed.data.pin ? await hashSecret(parsed.data.pin) : user.pinHash };
   delete (updated as User & { pin?: string }).pin;
   await store.put('users', updated.id, updated);
@@ -364,7 +406,7 @@ app.post('/api/alexa', async (request, response) => {
   const requestId = request.body?.request?.requestId;
   const intent = request.body?.request?.intent;
   const users = await store.list<User>('users');
-  const alexaUser = users.find((user) => user.email === (process.env.ALEXA_USER_EMAIL || 'admin@example.com'));
+  const alexaUser = users.find((user) => user.email === process.env.ALEXA_USER_EMAIL);
   if (!alexaUser?.defaultBabyId) return response.status(503).json({ error: 'Alexa user is not configured' });
   const now = new Date().toISOString();
   let input: z.infer<typeof eventInputSchema> | undefined;
