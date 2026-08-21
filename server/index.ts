@@ -310,6 +310,8 @@ app.post('/api/chat', requireUser, async (request, response) => {
 app.get('/api/insights/ai', requireUser, async (request, response) => {
   const user = request.currentUser!;
   const babyId = String(request.query.babyId || user.defaultBabyId || '');
+  const requestedDays = Number(request.query.days || 7);
+  const days = Number.isInteger(requestedDays) ? Math.min(180, Math.max(1, requestedDays)) : 7;
   if (!canAccessBaby(user, babyId)) return response.status(403).json({ error: 'Access denied' });
   const baby = await store.get<Baby>('babies', babyId);
   if (!baby?.active) return response.status(404).json({ error: 'Baby not found' });
@@ -317,17 +319,17 @@ app.get('/api/insights/ai', requireUser, async (request, response) => {
   let insight: string;
   let provider: 'azure-openai' | 'built-in' = 'azure-openai';
   try {
-    const result = await interpretWithAzure('Give the family a warm, factual summary of the last 7 days in at most 3 short sentences. Mention useful feeding, diaper, or sleep patterns only when supported by the data. Do not log an activity and do not give medical advice.', baby, events);
+    const result = await interpretWithAzure(`Give the family a warm, factual summary of the last ${days} days in at most 3 short sentences. Mention useful feeding, diaper, or sleep patterns only when supported by the data. Do not log an activity and do not give medical advice.`, baby, events);
     insight = result.reply;
   } catch (error) {
     provider = 'built-in';
     console.error(JSON.stringify({ level: 'warn', message: `AI family insight unavailable: ${(error as Error).message}` }));
     const now = new Date();
-    const stats = calculateInsights(events, baby.id, new Date(now.getTime() - 7 * 86_400_000), now, baby.timezone);
-    insight = `Over the last 7 days: ${stats.totals.feeds} feeds totaling ${stats.totals.ounces} oz, ${stats.totals.wet} wet diapers, ${stats.totals.dirty} dirty diapers, and ${stats.totals.sleepHours} hours of logged sleep.`;
+    const stats = calculateInsights(events, baby.id, new Date(now.getTime() - days * 86_400_000), now, baby.timezone);
+    insight = `Over the last ${days} days: ${stats.totals.feeds} feeds totaling ${stats.totals.ounces} oz, ${stats.totals.wet} wet diapers, ${stats.totals.dirty} dirty diapers, and ${stats.totals.sleepHours} hours of logged sleep.`;
   }
   response.setHeader('Cache-Control', 'private, no-store');
-  response.json({ insight, provider, generatedAt: new Date().toISOString() });
+  response.json({ insight, provider, days, generatedAt: new Date().toISOString() });
 });
 
 app.post('/api/transcribe', requireUser, express.raw({ type: 'audio/wav', limit: '4mb' }), async (request, response) => {

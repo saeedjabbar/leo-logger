@@ -10,6 +10,7 @@ A privacy-minded, mobile-first PWA for logging baby feeds, diapers, and sleep. I
 - Pull down from the top of the home logger for a manual mobile refresh.
 - Ask questions about authorized baby data, such as “What patterns do you see this week?”
 - An on-demand seven-day AI summary is available directly on the family logger without opening Admin.
+- Admin Insights includes on-demand Azure AI analysis for the selected 7, 14, or 30-day chart range.
 - Azure Speech transcription and Azure OpenAI interpretation use managed identity—there is no API-key or bring-your-own-provider path.
 - A built-in parser keeps common feed and diaper phrases working when Azure AI is not configured.
 - Real family exports are deliberately ignored by Git. Use synthetic data in tests and issues.

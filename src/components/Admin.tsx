@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { startRegistration } from '@simplewebauthn/browser';
-import { ArrowLeft, BarChart3, Download, FileUp, KeyRound, Plus, RefreshCw, Users } from 'lucide-react';
+import { ArrowLeft, BarChart3, Download, FileUp, KeyRound, Plus, RefreshCw, Sparkles, Users } from 'lucide-react';
 import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { api } from '../api';
 import type { Baby, BabyEvent, Insights, User } from '../types';
@@ -52,7 +52,7 @@ export default function Admin({ currentUser, initialBabies, onBack, onChanged }:
     <header className="flex flex-wrap items-center justify-between gap-3"><div className="flex items-center gap-3"><button onClick={onBack} className="grid size-12 place-items-center rounded-full bg-white shadow-sm" aria-label="Back to logger"><ArrowLeft /></button><div><p className="text-sm font-bold uppercase tracking-wider text-[#4f7b68]">Admin</p><h1 className="text-3xl font-black">Family dashboard</h1></div></div><div className="flex gap-2"><select value={babyId} onChange={(event) => setBabyId(event.target.value)} className="h-12 rounded-xl border bg-white px-3 font-bold">{babies.map((baby) => <option value={baby.id} key={baby.id}>{baby.name}</option>)}</select><button onClick={load} className="grid size-12 place-items-center rounded-xl bg-white shadow-sm" aria-label="Refresh"><RefreshCw /></button></div></header>
     <nav className="my-5 flex gap-2 overflow-x-auto pb-1" aria-label="Admin sections">{([['overview', 'Insights', BarChart3], ['history', 'History', FileUp], ['family', 'Family', Users], ['settings', 'Settings', KeyRound]] as const).map(([value, label, Icon]) => <button key={value} onClick={() => setTab(value)} className={`tap flex min-w-max items-center gap-2 rounded-2xl px-5 font-black ${tab === value ? 'bg-[#4f7b68] text-white' : 'bg-white'}`}><Icon size={20} />{label}</button>)}</nav>
     {message ? <p role="status" className="mb-4 rounded-2xl bg-amber-50 p-4 font-bold">{message}</p> : null}
-    {tab === 'overview' ? <Overview insights={insights} range={range} setRange={setRange} babyId={babyId} /> : null}
+    {tab === 'overview' ? <Overview key={`${babyId}:${range}`} insights={insights} range={range} setRange={setRange} babyId={babyId} /> : null}
     {tab === 'history' ? <History events={events} people={people} onEdit={editEvent} onDelete={removeEvent} babyId={babyId} onImported={(text) => { setMessage(text); load(); }} /> : null}
     {tab === 'family' ? <Family users={users} babies={babies} onChanged={() => { load(); onChanged(); }} setMessage={setMessage} /> : null}
     {tab === 'settings' ? <Settings setMessage={setMessage} onChanged={onChanged} /> : null}
@@ -60,6 +60,19 @@ export default function Admin({ currentUser, initialBabies, onBack, onChanged }:
 }
 
 function Overview({ insights, range, setRange, babyId }: { insights?: Insights; range: number; setRange: (value: number) => void; babyId?: string }) {
+  const [aiInsight, setAiInsight] = useState('');
+  const [aiProvider, setAiProvider] = useState('');
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiError, setAiError] = useState('');
+  async function generateAiInsight() {
+    if (!babyId) return;
+    setAiBusy(true); setAiError('');
+    try {
+      const result = await api.get<{ insight: string; provider: string }>(`/api/insights/ai?babyId=${babyId}&days=${range}`);
+      setAiInsight(result.insight); setAiProvider(result.provider);
+    } catch (reason) { setAiError((reason as Error).message); }
+    finally { setAiBusy(false); }
+  }
   if (!insights) return <p className="p-10 text-center">Loading insights…</p>;
   const cards = [
     ['Total ounces', `${number(insights.totals.ounces)} oz`], ['Feeds', String(insights.totals.feeds)], ['Wet diapers', String(insights.totals.wet)], ['Dirty diapers', String(insights.totals.dirty)],
@@ -67,6 +80,7 @@ function Overview({ insights, range, setRange, babyId }: { insights?: Insights; 
   ];
   return <section><div className="mb-4 flex items-center justify-between"><h2 className="text-2xl font-black">Last {range} days</h2><select value={range} onChange={(event) => setRange(Number(event.target.value))} className="h-12 rounded-xl border bg-white px-3 font-bold"><option value={7}>7 days</option><option value={14}>14 days</option><option value={30}>30 days</option></select></div>
     <div className="grid grid-cols-2 gap-3 md:grid-cols-4">{cards.map(([label, value]) => <article key={label} className="card rounded-2xl bg-white p-4"><p className="text-sm font-bold text-stone-500">{label}</p><p className="mt-1 text-2xl font-black">{value}</p></article>)}</div>
+    <article className="card mt-5 rounded-3xl bg-[#f2efe9] p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-[#725d3c]"><Sparkles size={18} />Azure AI analysis</p><h3 className="mt-1 text-xl font-black">Patterns from the last {range} days</h3></div><button type="button" onClick={generateAiInsight} disabled={aiBusy} className="min-h-12 rounded-xl bg-white px-4 font-black text-[#4f7b68] shadow-sm disabled:opacity-50">{aiBusy ? 'Analyzing…' : aiInsight ? 'Refresh analysis' : 'Analyze this period'}</button></div>{aiInsight ? <p className="mt-4 max-w-4xl text-lg leading-relaxed text-stone-700">{aiInsight}</p> : <p className="mt-3 text-stone-600">Generate a concise explanation of the feeding, diaper, and sleep patterns behind these charts.</p>}{aiProvider ? <p className="mt-3 text-xs font-bold uppercase tracking-wide text-stone-500">{aiProvider === 'azure-openai' ? 'Generated with Azure OpenAI' : 'Built-in summary'}</p> : null}{aiError ? <p role="alert" className="mt-3 font-bold text-red-700">{aiError}</p> : null}<p className="mt-2 text-xs text-stone-500">Descriptive only—not medical advice.</p></article>
     <div className="mt-5 grid gap-5 lg:grid-cols-2"><article className="card rounded-3xl bg-white p-4"><h3 className="mb-4 text-lg font-black">Feeding and sleep trend</h3><div className="h-72"><ResponsiveContainer width="100%" height="100%"><LineChart data={insights.daily}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="date" tickFormatter={(value) => value.slice(5)} /><YAxis /><Tooltip /><Legend /><Line type="monotone" dataKey="ounces" stroke="#d28a3c" strokeWidth={3} /><Line type="monotone" dataKey="sleepHours" stroke="#776c9b" strokeWidth={3} /></LineChart></ResponsiveContainer></div></article>
       <article className="card rounded-3xl bg-white p-4"><h3 className="mb-4 text-lg font-black">Diaper trend</h3><div className="h-72"><ResponsiveContainer width="100%" height="100%"><BarChart data={insights.daily}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="date" tickFormatter={(value) => value.slice(5)} /><YAxis allowDecimals={false} /><Tooltip /><Legend /><Bar dataKey="wet" fill="#58a7d1" /><Bar dataKey="dirty" fill="#a8794f" /></BarChart></ResponsiveContainer></div></article>
       <article className="card rounded-3xl bg-white p-4 lg:col-span-2"><h3 className="mb-4 text-lg font-black">Typical activity by hour</h3><div className="h-72"><ResponsiveContainer width="100%" height="100%"><BarChart data={insights.hourly}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="hour" tickFormatter={(hour) => `${hour % 12 || 12}${hour < 12 ? 'a' : 'p'}`} /><YAxis allowDecimals={false} /><Tooltip /><Legend /><Bar dataKey="feeds" fill="#d28a3c" /><Bar dataKey="diapers" fill="#58a7d1" /><Bar dataKey="sleeps" fill="#776c9b" /></BarChart></ResponsiveContainer></div></article></div>
