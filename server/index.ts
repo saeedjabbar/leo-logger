@@ -66,27 +66,46 @@ function rateLimited(key: string) {
 
 async function verifyAlexaRequest(request: express.Request) {
   if (process.env.ALEXA_DISABLE_SIGNATURE_VERIFICATION === 'true' && process.env.NODE_ENV !== 'production') return true;
+  const reject = (reason: string, details: Record<string, unknown> = {}) => {
+    console.warn(JSON.stringify({ level: 'warn', message: 'Alexa request rejected', reason, ...details }));
+    return false;
+  };
   const signature = request.get('signature');
   const certificateUrl = request.get('signaturecertchainurl');
-  if (!signature || !certificateUrl || !request.rawBody) return false;
-  let url: URL;
-  try { url = new URL(certificateUrl); } catch { return false; }
-  if (url.protocol !== 'https:' || url.hostname.toLowerCase() !== 's3.amazonaws.com' || (url.port && url.port !== '443') || !url.pathname.startsWith('/echo.api/')) return false;
-  let cached = alexaCertificates.get(certificateUrl);
-  if (!cached || cached.expiresAt < Date.now()) {
-    const result = await fetch(certificateUrl);
-    if (!result.ok) return false;
-    const pem = await result.text();
-    const certificate = new X509Certificate(pem);
-    if (!certificate.checkHost('echo-api.amazon.com') || new Date(certificate.validFrom) > new Date() || new Date(certificate.validTo) < new Date()) return false;
-    cached = { pem, expiresAt: Math.min(new Date(certificate.validTo).getTime(), Date.now() + 24 * 60 * 60_000) };
-    alexaCertificates.set(certificateUrl, cached);
+  if (!signature || !certificateUrl || !request.rawBody) {
+    return reject('missing_verification_headers', {
+      hasSignature: Boolean(signature),
+      hasCertificateUrl: Boolean(certificateUrl),
+      hasRawBody: Boolean(request.rawBody),
+    });
   }
-  const verifier = createVerify('RSA-SHA1');
-  verifier.update(request.rawBody); verifier.end();
-  if (!verifier.verify(cached.pem, signature, 'base64')) return false;
+  let url: URL;
+  try { url = new URL(certificateUrl); } catch { return reject('invalid_certificate_url'); }
+  if (url.protocol !== 'https:' || url.hostname.toLowerCase() !== 's3.amazonaws.com' || (url.port && url.port !== '443') || !url.pathname.startsWith('/echo.api/')) {
+    return reject('untrusted_certificate_url', { certificateHost: url.hostname, certificatePath: url.pathname });
+  }
+  let cached = alexaCertificates.get(certificateUrl);
+  try {
+    if (!cached || cached.expiresAt < Date.now()) {
+      const result = await fetch(certificateUrl);
+      if (!result.ok) return reject('certificate_download_failed', { status: result.status });
+      const pem = await result.text();
+      const certificate = new X509Certificate(pem);
+      if (!certificate.checkHost('echo-api.amazon.com')) return reject('certificate_hostname_mismatch');
+      if (new Date(certificate.validFrom) > new Date() || new Date(certificate.validTo) < new Date()) return reject('certificate_expired');
+      cached = { pem, expiresAt: Math.min(new Date(certificate.validTo).getTime(), Date.now() + 24 * 60 * 60_000) };
+      alexaCertificates.set(certificateUrl, cached);
+    }
+    const verifier = createVerify('RSA-SHA1');
+    verifier.update(request.rawBody); verifier.end();
+    if (!verifier.verify(cached.pem, signature, 'base64')) return reject('signature_mismatch');
+  } catch (error) {
+    return reject('certificate_verification_error', { error: error instanceof Error ? error.message : 'Unknown error' });
+  }
   const timestamp = request.body?.request?.timestamp;
-  return Boolean(timestamp && Math.abs(Date.now() - new Date(timestamp).getTime()) <= 150_000);
+  if (!timestamp || !Number.isFinite(new Date(timestamp).getTime())) return reject('invalid_timestamp');
+  if (Math.abs(Date.now() - new Date(timestamp).getTime()) > 150_000) return reject('stale_timestamp');
+  return true;
 }
 
 async function bootstrap() {
@@ -458,10 +477,21 @@ app.get('/api/admin/export.csv', requireAdmin, async (request, response) => {
 });
 
 app.post('/api/alexa', async (request, response) => {
+  const alexaRequestId = request.body?.request?.requestId;
+  response.on('finish', () => {
+    console.info(JSON.stringify({
+      level: 'info',
+      message: 'Alexa request handled',
+      requestId: alexaRequestId,
+      requestType: request.body?.request?.type,
+      intent: request.body?.request?.intent?.name,
+      status: response.statusCode,
+    }));
+  });
   if (!await verifyAlexaRequest(request)) return response.status(401).json({ error: 'Invalid Alexa request signature' });
   const skillId = request.body?.session?.application?.applicationId || request.body?.context?.System?.application?.applicationId;
   if (!process.env.ALEXA_SKILL_ID || skillId !== process.env.ALEXA_SKILL_ID) return response.status(403).json({ error: 'Unknown Alexa skill' });
-  const requestId = request.body?.request?.requestId;
+  const requestType = request.body?.request?.type;
   const intent = request.body?.request?.intent;
   const users = await store.list<User>('users');
   const alexaUser = users.find((user) => user.email === process.env.ALEXA_USER_EMAIL);
@@ -469,21 +499,27 @@ app.post('/api/alexa', async (request, response) => {
   const now = new Date().toISOString();
   let input: z.infer<typeof eventInputSchema> | undefined;
   let speech = 'I did not understand that.';
-  if (intent?.name === 'LogDiaperIntent') {
+  let shouldEndSession = true;
+  if (requestType === 'LaunchRequest' || intent?.name === 'AMAZON.HelpIntent') {
+    speech = 'Leo Logger is ready. Say log a pee, log a poop, log two ounces, start sleep, or baby woke up.';
+    shouldEndSession = false;
+  } else if (intent?.name === 'AMAZON.CancelIntent' || intent?.name === 'AMAZON.StopIntent') {
+    speech = 'Goodbye.';
+  } else if (intent?.name === 'LogDiaperIntent') {
     const raw = String(intent.slots?.kind?.value || 'pee').toLowerCase();
     const diaper = raw.includes('both') || raw.includes('pee and poop') ? 'both' : raw.includes('poop') ? 'poop' : 'pee';
-    input = { babyId: alexaUser.defaultBabyId, type: 'diaper', startAt: now, diaper, clientMutationId: requestId };
+    input = { babyId: alexaUser.defaultBabyId, type: 'diaper', startAt: now, diaper, clientMutationId: alexaRequestId };
     speech = `${diaper === 'both' ? 'Pee and poop' : diaper} logged now.`;
   } else if (intent?.name === 'LogFeedIntent') {
     const ounces = Number(intent.slots?.ounces?.value);
     const rawSource = String(intent.slots?.source?.value || 'formula').toLowerCase();
     const source = rawSource.includes('breast') ? 'breast_milk' : rawSource.includes('combo') ? 'combo' : 'formula';
     if (Number.isFinite(ounces) && ounces > 0) {
-      input = { babyId: alexaUser.defaultBabyId, type: 'feed', startAt: now, feed: { ounces, source }, clientMutationId: requestId };
+      input = { babyId: alexaUser.defaultBabyId, type: 'feed', startAt: now, feed: { ounces, source }, clientMutationId: alexaRequestId };
       speech = `${ounces} ounces of ${source.replace('_', ' ')} logged now.`;
     } else speech = 'Please say the number of ounces.';
   } else if (intent?.name === 'StartSleepIntent') {
-    input = { babyId: alexaUser.defaultBabyId, type: 'sleep', startAt: now, clientMutationId: requestId };
+    input = { babyId: alexaUser.defaultBabyId, type: 'sleep', startAt: now, clientMutationId: alexaRequestId };
     speech = 'Sleep started now.';
   } else if (intent?.name === 'StopSleepIntent') {
     const active = (await store.list<BabyEvent>('events')).find((event) => event.babyId === alexaUser.defaultBabyId && event.type === 'sleep' && !event.endAt && !event.deletedAt);
@@ -491,7 +527,7 @@ app.post('/api/alexa', async (request, response) => {
     else speech = 'There is no active sleep to stop.';
   }
   if (input) { const event = await createEvent(store, input, alexaUser, 'alexa'); publishBabyUpdate(event.babyId, 'created'); }
-  response.json({ version: '1.0', response: { outputSpeech: { type: 'PlainText', text: speech }, shouldEndSession: true } });
+  response.json({ version: '1.0', response: { outputSpeech: { type: 'PlainText', text: speech }, shouldEndSession } });
 });
 
 const staticPath = resolve('dist/client');
