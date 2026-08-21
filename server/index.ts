@@ -26,6 +26,12 @@ const origin = process.env.APP_ORIGIN || `http://localhost:${port}`;
 const rpID = process.env.RP_ID || new URL(origin).hostname;
 const attempts = new Map<string, { count: number; resetAt: number }>();
 const alexaCertificates = new Map<string, { pem: string; expiresAt: number }>();
+const eventStreams = new Map<string, Set<express.Response>>();
+
+function publishBabyUpdate(babyId: string, action: 'created' | 'updated' | 'deleted' | 'imported') {
+  const message = `event: events\ndata: ${JSON.stringify({ action, at: new Date().toISOString() })}\n\n`;
+  for (const stream of eventStreams.get(babyId) || []) stream.write(message);
+}
 
 declare global {
   namespace Express { interface Request { rawBody?: Buffer } }
@@ -260,6 +266,22 @@ app.get('/api/events', requireUser, async (request, response) => {
   response.json({ events, people: Object.fromEntries(users.map((person) => [person.id, person.displayName])) });
 });
 
+app.get('/api/events/stream', requireUser, (request, response) => {
+  const user = request.currentUser!;
+  const babyId = String(request.query.babyId || user.defaultBabyId || '');
+  if (!canAccessBaby(user, babyId)) return response.status(403).json({ error: 'Access denied' });
+  response.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
+  response.flushHeaders();
+  response.write('retry: 3000\n\nevent: ready\ndata: {}\n\n');
+  const streams = eventStreams.get(babyId) || new Set<express.Response>();
+  streams.add(response); eventStreams.set(babyId, streams);
+  const heartbeat = setInterval(() => response.write(': keepalive\n\n'), 25_000);
+  request.on('close', () => {
+    clearInterval(heartbeat); streams.delete(response);
+    if (!streams.size) eventStreams.delete(babyId);
+  });
+});
+
 app.post('/api/chat', requireUser, async (request, response) => {
   const parsed = z.object({ babyId: z.string().uuid(), message: z.string().trim().min(2).max(1000), inputMode: z.enum(['chat', 'voice']).default('chat') }).safeParse(request.body);
   if (!parsed.success) return response.status(400).json({ error: 'Enter a message for an allowed baby' });
@@ -281,6 +303,7 @@ app.post('/api/chat', requireUser, async (request, response) => {
   if (!result.clarificationNeeded) for (const input of toEventInputs(result, baby.id, requestId)) {
     created.push(await createEvent(store, input, user, parsed.data.inputMode));
   }
+  if (created.length) publishBabyUpdate(baby.id, 'created');
   response.json({ reply: result.reply, events: created, clarificationNeeded: result.clarificationNeeded, provider, aiConfigured: azureChatConfigured() });
 });
 
@@ -318,7 +341,11 @@ app.post('/api/transcribe', requireUser, express.raw({ type: 'audio/wav', limit:
 app.post('/api/events', requireUser, async (request, response) => {
   const parsed = eventInputSchema.safeParse(request.body);
   if (!parsed.success) return response.status(400).json({ error: parsed.error.issues[0]?.message || 'Invalid event' });
-  try { response.status(201).json({ event: await createEvent(store, parsed.data, request.currentUser!) }); }
+  try {
+    const event = await createEvent(store, parsed.data, request.currentUser!);
+    publishBabyUpdate(event.babyId, 'created');
+    response.status(201).json({ event });
+  }
   catch (error) { response.status(400).json({ error: (error as Error).message }); }
 });
 
@@ -334,6 +361,7 @@ app.patch('/api/events/:id', requireUser, async (request, response) => {
   try { validateEventDetails(updated); } catch (error) { return response.status(400).json({ error: (error as Error).message }); }
   await reviseEvent(store, event, request.currentUser!, 'update');
   await store.put('events', event.id, updated);
+  publishBabyUpdate(event.babyId, 'updated');
   response.json({ event: updated });
 });
 
@@ -345,6 +373,7 @@ app.delete('/api/events/:id', requireUser, async (request, response) => {
   if (user.role !== 'admin' && !canUndo) return response.status(403).json({ error: 'The undo window has expired' });
   await reviseEvent(store, event, user, canUndo ? 'undo' : 'delete');
   await store.put('events', event.id, { ...event, deletedAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+  publishBabyUpdate(event.babyId, 'deleted');
   response.json({ ok: true });
 });
 
@@ -410,7 +439,11 @@ app.patch('/api/admin/babies/:id', requireAdmin, async (request, response) => {
 app.post('/api/admin/import', requireAdmin, async (request, response) => {
   const parsed = z.object({ filename: z.string().min(1).max(200), content: z.string().min(1).max(2_000_000), babyId: z.string().uuid() }).safeParse(request.body);
   if (!parsed.success) return response.status(400).json({ error: 'Choose a valid CSV file and baby' });
-  try { response.json(await importHuckleberry(store, parsed.data.content, parsed.data.filename, parsed.data.babyId, request.currentUser!)); }
+  try {
+    const result = await importHuckleberry(store, parsed.data.content, parsed.data.filename, parsed.data.babyId, request.currentUser!);
+    if (result.imported) publishBabyUpdate(parsed.data.babyId, 'imported');
+    response.json(result);
+  }
   catch (error) { response.status(400).json({ error: `CSV import failed: ${(error as Error).message}` }); }
 });
 
@@ -452,10 +485,10 @@ app.post('/api/alexa', async (request, response) => {
     speech = 'Sleep started now.';
   } else if (intent?.name === 'StopSleepIntent') {
     const active = (await store.list<BabyEvent>('events')).find((event) => event.babyId === alexaUser.defaultBabyId && event.type === 'sleep' && !event.endAt && !event.deletedAt);
-    if (active) { await reviseEvent(store, active, alexaUser, 'update'); await store.put('events', active.id, { ...active, endAt: now, updatedAt: now }); speech = 'Wake time logged now.'; }
+    if (active) { await reviseEvent(store, active, alexaUser, 'update'); await store.put('events', active.id, { ...active, endAt: now, updatedAt: now }); publishBabyUpdate(active.babyId, 'updated'); speech = 'Wake time logged now.'; }
     else speech = 'There is no active sleep to stop.';
   }
-  if (input) await createEvent(store, input, alexaUser, 'alexa');
+  if (input) { const event = await createEvent(store, input, alexaUser, 'alexa'); publishBabyUpdate(event.babyId, 'created'); }
   response.json({ version: '1.0', response: { outputSpeech: { type: 'PlainText', text: speech }, shouldEndSession: true } });
 });
 

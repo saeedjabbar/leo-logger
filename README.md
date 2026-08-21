@@ -6,6 +6,7 @@ A privacy-minded, mobile-first PWA for logging baby feeds, diapers, and sleep. I
 
 - One-tap logging plus phrases such as “I fed him 2 oz at 2:10am.”
 - Tap a recent activity or its relative time to correct the exact time and details; caregiver edits are limited to entries they logged.
+- Family devices live-update through a private event stream, with focus and periodic refresh fallbacks for suspended mobile PWAs.
 - Ask questions about authorized baby data, such as “What patterns do you see this week?”
 - An on-demand seven-day AI summary is available directly on the family logger without opening Admin.
 - Azure Speech transcription and Azure OpenAI interpretation use managed identity—there is no API-key or bring-your-own-provider path.

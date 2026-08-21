@@ -70,6 +70,16 @@ export default function Logger({ user, babies, initialSleep, onAdmin, onLogout }
 
   useEffect(() => { refresh().catch(() => setNotice('Could not refresh. You can still log offline.')); }, [refresh]);
   useEffect(() => {
+    if (!babyId) return;
+    const sync = () => refresh().catch(() => undefined);
+    const stream = 'EventSource' in window ? new EventSource(`/api/events/stream?babyId=${encodeURIComponent(babyId)}`) : undefined;
+    stream?.addEventListener('events', sync);
+    const fallback = window.setInterval(sync, 30_000);
+    const onVisible = () => { if (document.visibilityState === 'visible') sync(); };
+    window.addEventListener('focus', sync); document.addEventListener('visibilitychange', onVisible);
+    return () => { stream?.close(); window.clearInterval(fallback); window.removeEventListener('focus', sync); document.removeEventListener('visibilitychange', onVisible); };
+  }, [babyId, refresh]);
+  useEffect(() => {
     const sync = () => flushEvents(async (event) => { await api.post('/api/events', event); }).then((count) => { if (count) { setNotice(`${count} offline ${count === 1 ? 'entry' : 'entries'} synced`); refresh(); } }).catch(() => undefined);
     window.addEventListener('online', sync); sync(); return () => window.removeEventListener('online', sync);
   }, [babyId, refresh]);
