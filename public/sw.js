@@ -26,3 +26,23 @@ self.addEventListener('fetch', (event) => {
       .catch(() => caches.match(request).then((response) => response || caches.match('/'))),
   );
 });
+
+self.addEventListener('push', (event) => {
+  const message = event.data?.json() || {};
+  event.waitUntil(self.registration.showNotification(message.title || 'Feeding reminder', {
+    body: message.body || 'The next feeding is due.',
+    icon: '/icon-192.png',
+    badge: '/icon-192.png',
+    tag: message.tag || 'feed-due',
+    renotify: true,
+    data: { url: message.url || '/' },
+  }));
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  event.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+    const existing = clients.find((client) => 'focus' in client);
+    return existing ? existing.focus() : self.clients.openWindow(event.notification.data?.url || '/');
+  }));
+});

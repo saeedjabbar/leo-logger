@@ -3,6 +3,8 @@ set -euo pipefail
 
 : "${BOOTSTRAP_PASSWORD:?Set BOOTSTRAP_PASSWORD to a strong temporary password (12+ characters)}"
 : "${SESSION_SECRET:?Set SESSION_SECRET to at least 32 random characters}"
+: "${VAPID_PUBLIC_KEY:?Set VAPID_PUBLIC_KEY using npx web-push generate-vapid-keys}"
+: "${VAPID_PRIVATE_KEY:?Set VAPID_PRIVATE_KEY using npx web-push generate-vapid-keys}"
 
 LOCATION="${LOCATION:-eastus2}"
 RESOURCE_GROUP="${RESOURCE_GROUP:-rg-leo-logger}"
@@ -40,13 +42,14 @@ az acr build --registry "$REGISTRY_NAME" --image "leo-logger:${IMAGE_TAG}" .
 FQDN="$(az containerapp show --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" --query properties.configuration.ingress.fqdn -o tsv)"
 az containerapp registry set --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" --server "${REGISTRY_NAME}.azurecr.io" --identity system --output none
 az containerapp secret set --name "$APP_NAME" --resource-group "$RESOURCE_GROUP" \
-  --secrets "bootstrap-password=${BOOTSTRAP_PASSWORD}" "session-secret=${SESSION_SECRET}" --output none
+  --secrets "bootstrap-password=${BOOTSTRAP_PASSWORD}" "session-secret=${SESSION_SECRET}" "vapid-private-key=${VAPID_PRIVATE_KEY}" --output none
 
 ENV_VARS=(
   "NODE_ENV=production" "PORT=3000" "STORE_MODE=azure" "AZURE_STORAGE_ACCOUNT=${STORAGE_ACCOUNT}"
   "AZURE_TABLE_NAME=leologger" "APP_ORIGIN=https://${FQDN}" "RP_ID=${FQDN}"
   "BOOTSTRAP_ADMINS=admin@example.com:Admin"
   "BOOTSTRAP_PASSWORD=secretref:bootstrap-password" "SESSION_SECRET=secretref:session-secret"
+  "VAPID_PUBLIC_KEY=${VAPID_PUBLIC_KEY}" "VAPID_PRIVATE_KEY=secretref:vapid-private-key" "VAPID_SUBJECT=mailto:admin@example.com"
   "ALEXA_USER_EMAIL=admin@example.com"
 )
 if [[ -n "${ALEXA_SKILL_ID:-}" ]]; then ENV_VARS+=("ALEXA_SKILL_ID=${ALEXA_SKILL_ID}"); fi

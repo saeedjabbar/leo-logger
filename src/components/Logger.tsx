@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Baby as BabyIcon, BedDouble, Droplets, Milk, Settings, Sparkles } from 'lucide-react';
+import { Baby as BabyIcon, BedDouble, Bell, BellOff, Droplets, Milk, Settings, Sparkles } from 'lucide-react';
 import { api } from '../api';
 import { flushEvents, queueEvent } from '../offline';
 import type { Baby, BabyEvent, User } from '../types';
@@ -19,6 +19,19 @@ function ago(value: string) {
   const hours = Math.floor(minutes / 60); return `${hours}h ${minutes % 60}m ago`;
 }
 
+function durationLabel(milliseconds: number) {
+  const minutes = Math.max(0, Math.round(Math.abs(milliseconds) / 60_000));
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours} hr${hours === 1 ? '' : 's'}${minutes % 60 ? ` ${minutes % 60} min` : ''}`;
+}
+
+function applicationServerKey(value: string) {
+  const padding = '='.repeat((4 - value.length % 4) % 4);
+  const raw = atob((value + padding).replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from([...raw].map((character) => character.charCodeAt(0)));
+}
+
 export default function Logger({ user, babies, initialSleep, onAdmin, onLogout }: { user: User; babies: Baby[]; initialSleep?: BabyEvent; onAdmin: () => void; onLogout: () => void }) {
   const [babyId, setBabyId] = useState(user.defaultBabyId || babies[0]?.id);
   const [events, setEvents] = useState<BabyEvent[]>([]);
@@ -27,8 +40,12 @@ export default function Logger({ user, babies, initialSleep, onAdmin, onLogout }
   const [feedOpen, setFeedOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
+  const [now, setNow] = useState(() => Date.now());
+  const [remindersEnabled, setRemindersEnabled] = useState(false);
   const baby = babies.find((item) => item.id === babyId);
   const recent = useMemo(() => events.slice(0, 8), [events]);
+  const latestFeed = useMemo(() => events.find((event) => event.type === 'feed'), [events]);
+  const nextFeedAt = latestFeed ? new Date(latestFeed.startAt).getTime() + (baby?.feedingIntervalMinutes || 120) * 60_000 : undefined;
 
   const refresh = useCallback(async () => {
     if (!babyId) return;
@@ -42,6 +59,30 @@ export default function Logger({ user, babies, initialSleep, onAdmin, onLogout }
     const sync = () => flushEvents(async (event) => { await api.post('/api/events', event); }).then((count) => { if (count) { setNotice(`${count} offline ${count === 1 ? 'entry' : 'entries'} synced`); refresh(); } }).catch(() => undefined);
     window.addEventListener('online', sync); sync(); return () => window.removeEventListener('online', sync);
   }, [babyId, refresh]);
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 30_000);
+    if ('serviceWorker' in navigator && 'PushManager' in window) navigator.serviceWorker.ready.then((registration) => registration.pushManager.getSubscription()).then((subscription) => setRemindersEnabled(Boolean(subscription))).catch(() => undefined);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  async function toggleReminders() {
+    try {
+      if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) throw new Error('Install Leo Logger to your home screen first, then reopen it to enable reminders.');
+      const registration = await navigator.serviceWorker.ready;
+      const current = await registration.pushManager.getSubscription();
+      if (current) {
+        await api.delete('/api/reminders/subscribe', { endpoint: current.endpoint });
+        await current.unsubscribe(); setRemindersEnabled(false); setNotice('Feed reminders turned off on this device'); return;
+      }
+      const permission = await Notification.requestPermission();
+      if (permission !== 'granted') throw new Error('Notifications were not allowed. You can enable them in your phone settings.');
+      const config = await api.get<{ configured: boolean; publicKey: string | null }>('/api/reminders/config');
+      if (!config.configured || !config.publicKey) throw new Error('Feed reminders are not available yet.');
+      const subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: applicationServerKey(config.publicKey) });
+      await api.post('/api/reminders/subscribe', subscription.toJSON());
+      setRemindersEnabled(true); setNotice('Feed reminders enabled on this device');
+    } catch (reason) { setNotice((reason as Error).message); }
+  }
 
   async function log(input: Record<string, unknown>, label: string) {
     if (!babyId) return;
@@ -78,6 +119,10 @@ export default function Logger({ user, babies, initialSleep, onAdmin, onLogout }
       <div className="flex gap-2">{user.role === 'master_admin' ? <button onClick={onAdmin} className="grid size-12 place-items-center rounded-full bg-white shadow-sm" aria-label="Open admin dashboard"><Settings /></button> : null}<button onClick={onLogout} className="rounded-full bg-stone-100 px-4 font-bold">Sign out</button></div>
     </header>
     {user.mustChangePassword ? <button onClick={onAdmin} className="mb-4 w-full rounded-2xl bg-amber-100 p-4 text-left font-bold text-amber-900">Temporary password in use. Open Admin Settings to change it now.</button> : null}
+    <section className={`card mb-4 rounded-3xl p-4 ${nextFeedAt && nextFeedAt <= now ? 'bg-red-50 text-red-900' : 'bg-white'}`} aria-label="Feeding schedule">
+      <div className="flex items-center justify-between gap-3"><div><p className="text-sm font-bold uppercase tracking-wide opacity-70">Feeding reminder · every {durationLabel((baby?.feedingIntervalMinutes || 120) * 60_000)}</p><p className="mt-1 text-xl font-black">{nextFeedAt ? nextFeedAt <= now ? `Feed due ${durationLabel(now - nextFeedAt)} ago` : `Next feed in ${durationLabel(nextFeedAt - now)}` : 'Log the first feed to start reminders'}</p></div><button onClick={toggleReminders} className={`tap grid min-w-16 place-items-center rounded-2xl ${remindersEnabled ? 'bg-[#4f7b68] text-white' : 'bg-stone-100'}`} aria-label={remindersEnabled ? 'Turn off feed reminders' : 'Enable feed reminders'}>{remindersEnabled ? <Bell /> : <BellOff />}</button></div>
+      <p className="mt-2 text-sm font-semibold opacity-70">{remindersEnabled ? 'Alerts are on for this device.' : 'Tap the bell to get an alert when feeding is due.'}</p>
+    </section>
     {babies.length > 1 ? <label className="mb-4 block text-sm font-bold">Logging for<select value={babyId} onChange={(event) => setBabyId(event.target.value)} className="ml-2 h-12 rounded-xl border border-stone-200 bg-white px-3">{babies.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label> : null}
     {notice ? <div role="status" className="mb-4 flex min-h-14 items-center justify-between rounded-2xl bg-[#e7f2ec] px-4 font-bold text-[#345343]"><span>{notice}</span>{events[0] && Date.now() - new Date(events[0].createdAt).getTime() < 120_000 ? <button onClick={undo} className="min-h-12 px-2 underline">Undo</button> : null}</div> : null}
     <section aria-labelledby="quick-title"><h2 id="quick-title" className="sr-only">Quick log</h2><div className="grid grid-cols-2 gap-3">

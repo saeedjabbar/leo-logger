@@ -14,7 +14,8 @@ import { hashSecret, verifySecret } from './security.js';
 import { eventInputSchema, createEvent, reviseEvent, canAccessBaby, validateEventDetails } from './events.js';
 import { calculateInsights } from './analytics.js';
 import { importHuckleberry } from './importer.js';
-import type { Baby, BabyEvent, Challenge, Passkey, Session, User } from './types.js';
+import type { Baby, BabyEvent, Challenge, Passkey, PushSubscriptionRecord, Session, User } from './types.js';
+import { pushSubscriptionId, remindersConfigured, startReminderScheduler } from './reminders.js';
 
 const store = createStore();
 const app = express();
@@ -85,9 +86,15 @@ async function bootstrap() {
   const users = await store.list<User>('users');
   let babies = await store.list<Baby>('babies');
   if (!babies.length) {
-    const leo: Baby = { id: randomUUID(), name: 'Leo', timezone: 'America/New_York', active: true, createdAt: new Date().toISOString() };
+    const leo: Baby = { id: randomUUID(), name: 'Leo', timezone: 'America/New_York', feedingIntervalMinutes: 120, active: true, createdAt: new Date().toISOString() };
     await store.put('babies', leo.id, leo);
     babies = [leo];
+  }
+  for (const baby of babies) {
+    if (!baby.feedingIntervalMinutes) {
+      baby.feedingIntervalMinutes = 120;
+      await store.put('babies', baby.id, baby);
+    }
   }
   if (!users.length) {
     const password = process.env.BOOTSTRAP_PASSWORD;
@@ -147,6 +154,31 @@ app.get('/api/me', requireUser, async (request, response) => {
   const allowed = babies.filter((baby) => baby.active && canAccessBaby(user, baby.id));
   const activeSleep = events.find((event) => allowed.some((baby) => baby.id === event.babyId) && event.type === 'sleep' && !event.endAt && !event.deletedAt);
   response.json({ user: publicUser(user), babies: allowed, activeSleep });
+});
+
+app.get('/api/reminders/config', requireUser, (_request, response) => {
+  response.json({ configured: remindersConfigured(), publicKey: process.env.VAPID_PUBLIC_KEY || null });
+});
+
+app.post('/api/reminders/subscribe', requireUser, async (request, response) => {
+  const parsed = z.object({
+    endpoint: z.url(), expirationTime: z.number().nullable().optional(),
+    keys: z.object({ p256dh: z.string().min(20), auth: z.string().min(8) }),
+  }).safeParse(request.body);
+  if (!parsed.success || !remindersConfigured()) return response.status(400).json({ error: remindersConfigured() ? 'Invalid notification subscription' : 'Notifications are not configured' });
+  const id = pushSubscriptionId(parsed.data.endpoint);
+  const subscription: PushSubscriptionRecord = { id, userId: request.currentUser!.id, ...parsed.data, createdAt: new Date().toISOString() };
+  await store.put('pushSubscriptions', id, subscription);
+  response.status(201).json({ subscribed: true });
+});
+
+app.delete('/api/reminders/subscribe', requireUser, async (request, response) => {
+  const parsed = z.object({ endpoint: z.url() }).safeParse(request.body);
+  if (!parsed.success) return response.status(400).json({ error: 'Invalid notification subscription' });
+  const id = pushSubscriptionId(parsed.data.endpoint);
+  const subscription = await store.get<PushSubscriptionRecord>('pushSubscriptions', id);
+  if (subscription?.userId === request.currentUser!.id || request.currentUser!.role === 'master_admin') await store.remove('pushSubscriptions', id);
+  response.json({ subscribed: false });
 });
 
 app.post('/api/auth/passkeys/register/options', requireAdmin, async (request, response) => {
@@ -291,12 +323,23 @@ app.patch('/api/admin/users/:id', requireAdmin, async (request, response) => {
 
 app.get('/api/admin/babies', requireAdmin, async (_request, response) => response.json({ babies: await store.list<Baby>('babies') }));
 app.post('/api/admin/babies', requireAdmin, async (request, response) => {
-  const parsed = z.object({ name: z.string().min(1).max(80), birthDate: z.string().optional(), timezone: z.string().default('America/New_York') }).safeParse(request.body);
+  const parsed = z.object({ name: z.string().min(1).max(80), birthDate: z.string().optional(), timezone: z.string().default('America/New_York'), feedingIntervalMinutes: z.number().int().min(15).max(720).default(120) }).safeParse(request.body);
   if (!parsed.success) return response.status(400).json({ error: 'Enter a baby name' });
   try { new Intl.DateTimeFormat('en', { timeZone: parsed.data.timezone }); } catch { return response.status(400).json({ error: 'Invalid timezone' }); }
   const baby: Baby = { id: randomUUID(), ...parsed.data, active: true, createdAt: new Date().toISOString() };
   await store.put('babies', baby.id, baby);
   response.status(201).json({ baby });
+});
+
+app.patch('/api/admin/babies/:id', requireAdmin, async (request, response) => {
+  const baby = await store.get<Baby>('babies', String(request.params.id));
+  if (!baby) return response.status(404).json({ error: 'Baby not found' });
+  const parsed = z.object({ name: z.string().min(1).max(80).optional(), birthDate: z.string().optional(), timezone: z.string().optional(), feedingIntervalMinutes: z.number().int().min(15).max(720).optional(), active: z.boolean().optional() }).safeParse(request.body);
+  if (!parsed.success) return response.status(400).json({ error: 'Feeding interval must be between 15 minutes and 12 hours' });
+  if (parsed.data.timezone) try { new Intl.DateTimeFormat('en', { timeZone: parsed.data.timezone }); } catch { return response.status(400).json({ error: 'Invalid timezone' }); }
+  const updated = { ...baby, ...parsed.data };
+  await store.put('babies', baby.id, updated);
+  response.json({ baby: updated });
 });
 
 app.post('/api/admin/import', requireAdmin, async (request, response) => {
@@ -363,6 +406,9 @@ app.use((error: unknown, _request: express.Request, response: express.Response, 
   response.status(500).json({ error: 'Something went wrong' });
 });
 
-bootstrap().then(() => app.listen(port, () => console.log(JSON.stringify({ level: 'info', message: `Leo Logger listening on ${port}` })))).catch((error) => { console.error(error); process.exit(1); });
+bootstrap().then(() => {
+  startReminderScheduler(store);
+  app.listen(port, () => console.log(JSON.stringify({ level: 'info', message: `Leo Logger listening on ${port}` })));
+}).catch((error) => { console.error(error); process.exit(1); });
 
 export { app, store };

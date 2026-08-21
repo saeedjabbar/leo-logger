@@ -9,8 +9,25 @@ export interface Baby {
   name: string;
   birthDate?: string;
   timezone: string;
+  feedingIntervalMinutes: number;
   active: boolean;
   createdAt: string;
+}
+
+export interface PushSubscriptionRecord {
+  id: string;
+  userId: string;
+  endpoint: string;
+  expirationTime?: number | null;
+  keys: { p256dh: string; auth: string };
+  createdAt: string;
+}
+
+export interface ReminderState {
+  id: string;
+  babyId: string;
+  feedMarker: string;
+  notifiedAt: string;
 }
 
 export interface User {
