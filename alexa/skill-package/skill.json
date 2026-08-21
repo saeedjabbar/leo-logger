@@ -1,0 +1,37 @@
+{
+  "manifest": {
+    "publishingInformation": {
+      "locales": {
+        "en-US": {
+          "summary": "Log baby care events for your private family tracker.",
+          "examplePhrases": [
+            "Alexa, ask Leo Logger to log a pee",
+            "Alexa, ask Leo Logger to log a two ounce feed",
+            "Alexa, ask Leo Logger to start sleep"
+          ],
+          "keywords": ["baby", "feeding", "diaper", "sleep"],
+          "name": "Leo Logger",
+          "description": "Private family skill for logging feeds, diapers, and sleep."
+        }
+      },
+      "isAvailableWorldwide": false,
+      "testingInstructions": "Private family skill. Use the provided sample utterances.",
+      "category": "CHILDRENS_EDUCATION_AND_REFERENCE",
+      "distributionCountries": ["US"]
+    },
+    "apis": {
+      "custom": {
+        "endpoint": { "uri": "https://REPLACE_WITH_AZURE_FQDN/api/alexa", "sslCertificateType": "Trusted" },
+        "interfaces": []
+      }
+    },
+    "manifestVersion": "1.0",
+    "privacyAndCompliance": {
+      "allowsPurchases": false,
+      "usesPersonalInfo": true,
+      "isChildDirected": false,
+      "isExportCompliant": true,
+      "containsAds": false
+    }
+  }
+}

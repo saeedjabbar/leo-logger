@@ -1,0 +1,42 @@
+{
+  "interactionModel": {
+    "languageModel": {
+      "invocationName": "leo logger",
+      "intents": [
+        { "name": "AMAZON.HelpIntent", "samples": [] },
+        { "name": "AMAZON.CancelIntent", "samples": [] },
+        { "name": "AMAZON.StopIntent", "samples": [] },
+        {
+          "name": "LogDiaperIntent",
+          "slots": [{ "name": "kind", "type": "DIAPER_KIND" }],
+          "samples": ["log a {kind}", "record a {kind}", "baby had a {kind}", "add a {kind}"]
+        },
+        {
+          "name": "LogFeedIntent",
+          "slots": [
+            { "name": "ounces", "type": "AMAZON.NUMBER" },
+            { "name": "source", "type": "MILK_SOURCE" }
+          ],
+          "samples": [
+            "log a {ounces} ounce feed", "log {ounces} ounces", "record {ounces} ounces",
+            "log {ounces} ounces of {source}", "baby drank {ounces} ounces of {source}"
+          ]
+        },
+        { "name": "StartSleepIntent", "slots": [], "samples": ["start sleep", "baby went to sleep", "log sleep", "start a nap"] },
+        { "name": "StopSleepIntent", "slots": [], "samples": ["baby woke up", "stop sleep", "end the nap", "log wake up"] }
+      ],
+      "types": [
+        { "name": "DIAPER_KIND", "values": [
+          { "name": { "value": "pee", "synonyms": ["wet diaper", "wet"] } },
+          { "name": { "value": "poop", "synonyms": ["dirty diaper", "dirty", "poo"] } },
+          { "name": { "value": "pee and poop", "synonyms": ["both", "wet and dirty"] } }
+        ] },
+        { "name": "MILK_SOURCE", "values": [
+          { "name": { "value": "formula", "synonyms": [] } },
+          { "name": { "value": "breast milk", "synonyms": ["breastmilk"] } },
+          { "name": { "value": "combo", "synonyms": ["combination", "mixed"] } }
+        ] }
+      ]
+    }
+  }
+}
