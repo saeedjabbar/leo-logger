@@ -1,12 +1,18 @@
 import { useCallback, useEffect, useState } from 'react';
 import { startRegistration } from '@simplewebauthn/browser';
-import { ArrowLeft, BarChart3, Download, FileUp, KeyRound, Plus, RefreshCw, Sparkles, Users } from 'lucide-react';
+import { ArrowLeft, Baby as BabyIcon, BarChart3, Bell, BellOff, CalendarClock, Download, FileUp, KeyRound, Plus, RefreshCw, Sparkles, Trash2, Users } from 'lucide-react';
 import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { api } from '../api';
 import type { Baby, BabyEvent, Insights, User } from '../types';
 
-type Tab = 'overview' | 'history' | 'caregivers' | 'settings';
+type Tab = 'overview' | 'history' | 'caregivers' | 'schedules' | 'babies' | 'settings';
 const number = (value: number, digits = 1) => value.toFixed(digits).replace(/\.0$/, '');
+
+function applicationServerKey(value: string) {
+  const padding = '='.repeat((4 - value.length % 4) % 4);
+  const raw = atob((value + padding).replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from([...raw].map((character) => character.charCodeAt(0)));
+}
 
 export default function Admin({ currentUser, initialBabies, onBack, onChanged }: { currentUser: User; initialBabies: Baby[]; onBack: () => void; onChanged: () => void }) {
   const [tab, setTab] = useState<Tab>(currentUser.mustChangePassword ? 'settings' : 'overview');
@@ -20,12 +26,11 @@ export default function Admin({ currentUser, initialBabies, onBack, onChanged }:
   const [message, setMessage] = useState('');
 
   const load = useCallback(async () => {
-    if (!babyId) return;
     setMessage('');
     try {
       const [stats, history, caregivers, babyData] = await Promise.all([
-        api.get<Insights>(`/api/insights?babyId=${babyId}&from=${new Date(Date.now() - range * 86_400_000).toISOString()}&to=${new Date().toISOString()}`),
-        api.get<{ events: BabyEvent[]; people: Record<string, string> }>(`/api/events?babyId=${babyId}&limit=500`),
+        babyId ? api.get<Insights>(`/api/insights?babyId=${babyId}&from=${new Date(Date.now() - range * 86_400_000).toISOString()}&to=${new Date().toISOString()}`) : Promise.resolve(undefined),
+        babyId ? api.get<{ events: BabyEvent[]; people: Record<string, string> }>(`/api/events?babyId=${babyId}&limit=500`) : Promise.resolve({ events: [], people: {} }),
         api.get<{ users: User[] }>('/api/admin/users'), api.get<{ babies: Baby[] }>('/api/admin/babies'),
       ]);
       setInsights(stats); setEvents(history.events); setPeople(history.people); setUsers(caregivers.users); setBabies(babyData.babies);
@@ -50,11 +55,13 @@ export default function Admin({ currentUser, initialBabies, onBack, onChanged }:
 
   return <main className="safe-top safe-bottom mx-auto min-h-dvh max-w-6xl px-4">
     <header className="flex flex-wrap items-center justify-between gap-3"><div className="flex items-center gap-3"><button onClick={onBack} className="grid size-12 place-items-center rounded-full bg-white shadow-sm" aria-label="Back to logger"><ArrowLeft /></button><div><p className="text-sm font-bold uppercase tracking-wider text-[#4f7b68]">Admin</p><h1 className="text-3xl font-black">Caregiver dashboard</h1></div></div><div className="flex gap-2"><select value={babyId} onChange={(event) => setBabyId(event.target.value)} className="h-12 rounded-xl border bg-white px-3 font-bold">{babies.map((baby) => <option value={baby.id} key={baby.id}>{baby.name}</option>)}</select><button onClick={load} className="grid size-12 place-items-center rounded-xl bg-white shadow-sm" aria-label="Refresh"><RefreshCw /></button></div></header>
-    <nav className="my-5 flex gap-2 overflow-x-auto pb-1" aria-label="Admin sections">{([['overview', 'Insights', BarChart3], ['history', 'History', FileUp], ['caregivers', 'Caregivers', Users], ['settings', 'Settings', KeyRound]] as const).map(([value, label, Icon]) => <button key={value} onClick={() => setTab(value)} className={`tap flex min-w-max items-center gap-2 rounded-2xl px-5 font-black ${tab === value ? 'bg-[#4f7b68] text-white' : 'bg-white'}`}><Icon size={20} />{label}</button>)}</nav>
+    <nav className="my-5 flex gap-2 overflow-x-auto pb-1" aria-label="Admin sections">{([['overview', 'Insights', BarChart3], ['history', 'History', FileUp], ['caregivers', 'Caregivers', Users], ['schedules', 'Schedules', CalendarClock], ['babies', 'Babies', BabyIcon], ['settings', 'Settings', KeyRound]] as const).map(([value, label, Icon]) => <button key={value} onClick={() => setTab(value)} className={`tap flex min-w-max items-center gap-2 rounded-2xl px-5 font-black ${tab === value ? 'bg-[#4f7b68] text-white' : 'bg-white'}`}><Icon size={20} />{label}</button>)}</nav>
     {message ? <p role="status" className="mb-4 rounded-2xl bg-amber-50 p-4 font-bold">{message}</p> : null}
     {tab === 'overview' ? <Overview key={`${babyId}:${range}`} insights={insights} range={range} setRange={setRange} babyId={babyId} /> : null}
     {tab === 'history' ? <History events={events} people={people} onEdit={editEvent} onDelete={removeEvent} babyId={babyId} onImported={(text) => { setMessage(text); load(); }} /> : null}
     {tab === 'caregivers' ? <Caregivers users={users} babies={babies} onChanged={() => { load(); onChanged(); }} setMessage={setMessage} /> : null}
+    {tab === 'schedules' ? <Schedules currentUser={currentUser} babies={babies} setMessage={setMessage} onChanged={() => { load(); onChanged(); }} /> : null}
+    {tab === 'babies' ? <Babies babies={babies} setMessage={setMessage} onChanged={() => { load(); onChanged(); }} onRemoved={(removedId) => { setBabies((current) => current.filter((baby) => baby.id !== removedId)); setBabyId((current) => current === removedId ? babies.find((baby) => baby.id !== removedId)?.id ?? '' : current); onChanged(); }} /> : null}
     {tab === 'settings' ? <Settings setMessage={setMessage} onChanged={onChanged} /> : null}
   </main>;
 }
@@ -101,21 +108,69 @@ function History({ events, people, onEdit, onDelete, babyId, onImported }: { eve
 
 function Caregivers({ users, babies, onChanged, setMessage }: { users: User[]; babies: Baby[]; onChanged: () => void; setMessage: (message: string) => void }) {
   const [name, setName] = useState(''); const [pin, setPin] = useState(''); const [defaultBabyId, setDefaultBabyId] = useState(babies[0]?.id || '');
-  const [babyName, setBabyName] = useState(''); const [birthDate, setBirthDate] = useState(''); const [feedingIntervalMinutes, setFeedingIntervalMinutes] = useState(120);
   async function addCaregiver(event: React.FormEvent) { event.preventDefault(); try { await api.post('/api/admin/users', { displayName: name, pin, allowedBabyIds: [defaultBabyId], defaultBabyId }); setName(''); setPin(''); setMessage(`${name} can now sign in with the PIN you created.`); onChanged(); } catch (reason) { setMessage((reason as Error).message); } }
-  async function addBaby(event: React.FormEvent) { event.preventDefault(); try { await api.post('/api/admin/babies', { name: babyName, birthDate: birthDate || undefined, timezone: 'America/New_York', feedingIntervalMinutes }); setBabyName(''); setBirthDate(''); setFeedingIntervalMinutes(120); setMessage(`${babyName} added.`); onChanged(); } catch (reason) { setMessage((reason as Error).message); } }
-  return <section className="grid gap-5 lg:grid-cols-2"><div><h2 className="mb-3 text-2xl font-black">Caregivers</h2><form onSubmit={addCaregiver} className="card rounded-3xl bg-white p-5"><h3 className="text-lg font-black">Add a caregiver</h3><label className="mt-4 block font-bold">Name<input value={name} onChange={(event) => setName(event.target.value)} className="mt-1 h-14 w-full rounded-xl border-2 border-stone-200 px-3" required /></label><label className="mt-3 block font-bold">Six-digit PIN<input value={pin} onChange={(event) => setPin(event.target.value.replace(/\D/g, '').slice(0, 6))} inputMode="numeric" className="mt-1 h-14 w-full rounded-xl border-2 border-stone-200 px-3 text-xl tracking-widest" required /></label><label className="mt-3 block font-bold">Default baby<select value={defaultBabyId} onChange={(event) => setDefaultBabyId(event.target.value)} className="mt-1 h-14 w-full rounded-xl border-2 border-stone-200 bg-white px-3">{babies.map((baby) => <option value={baby.id} key={baby.id}>{baby.name}</option>)}</select></label><button disabled={pin.length !== 6} className="tap mt-4 w-full rounded-xl bg-[#4f7b68] font-black text-white disabled:opacity-40"><Plus className="mr-2 inline" />Add caregiver</button></form><div className="mt-3 space-y-2">{users.map((user) => user.role === 'caregiver' ? <CaregiverCard key={user.id} user={user} babies={babies} onChanged={onChanged} setMessage={setMessage} /> : <div key={user.id} className="card rounded-2xl bg-white p-4"><p className="font-black">{user.displayName}</p><p className="text-sm text-stone-500">Admin · {user.active ? 'Active' : 'Disabled'}</p></div>)}</div></div>
-    <div><h2 className="mb-3 text-2xl font-black">Babies and feeding schedules</h2><form onSubmit={addBaby} className="card rounded-3xl bg-white p-5"><label className="font-bold">Baby name<input value={babyName} onChange={(event) => setBabyName(event.target.value)} className="mt-1 h-14 w-full rounded-xl border-2 border-stone-200 px-3" required /></label><label className="mt-3 block font-bold">Birth date (optional)<input type="date" value={birthDate} onChange={(event) => setBirthDate(event.target.value)} className="mt-1 h-14 w-full rounded-xl border-2 border-stone-200 px-3" /></label><label className="mt-3 block font-bold">Feed every<select value={feedingIntervalMinutes} onChange={(event) => setFeedingIntervalMinutes(Number(event.target.value))} className="mt-1 h-14 w-full rounded-xl border-2 border-stone-200 bg-white px-3"><option value={90}>1½ hours</option><option value={120}>2 hours</option><option value={150}>2½ hours</option><option value={180}>3 hours</option><option value={240}>4 hours</option></select></label><button className="tap mt-4 w-full rounded-xl bg-[#4f7b68] font-black text-white"><Plus className="mr-2 inline" />Add baby</button></form><div className="mt-3 space-y-2">{babies.map((baby) => <BabyScheduleCard key={baby.id} baby={baby} setMessage={setMessage} onChanged={onChanged} />)}</div></div>
-  </section>;
+  return <section><h2 className="mb-3 text-2xl font-black">Caregivers</h2><div className="grid gap-5 lg:grid-cols-2"><form onSubmit={addCaregiver} className="card h-fit rounded-3xl bg-white p-5"><h3 className="text-lg font-black">Add a caregiver</h3><label className="mt-4 block font-bold">Name<input value={name} onChange={(event) => setName(event.target.value)} className="mt-1 h-14 w-full rounded-xl border-2 border-stone-200 px-3" required /></label><label className="mt-3 block font-bold">Six-digit PIN<input value={pin} onChange={(event) => setPin(event.target.value.replace(/\D/g, '').slice(0, 6))} inputMode="numeric" className="mt-1 h-14 w-full rounded-xl border-2 border-stone-200 px-3 text-xl tracking-widest" required /></label><label className="mt-3 block font-bold">Default baby<select value={defaultBabyId} onChange={(event) => setDefaultBabyId(event.target.value)} className="mt-1 h-14 w-full rounded-xl border-2 border-stone-200 bg-white px-3">{babies.map((baby) => <option value={baby.id} key={baby.id}>{baby.name}</option>)}</select></label><button disabled={pin.length !== 6 || !defaultBabyId} className="tap mt-4 w-full rounded-xl bg-[#4f7b68] font-black text-white disabled:opacity-40"><Plus className="mr-2 inline" />Add caregiver</button></form><div className="space-y-2">{users.map((user) => user.role === 'caregiver' ? <CaregiverCard key={user.id} user={user} babies={babies} onChanged={onChanged} setMessage={setMessage} /> : <div key={user.id} className="card rounded-2xl bg-white p-4"><p className="font-black">{user.displayName}</p><p className="text-sm text-stone-500">Admin · {user.active ? 'Active' : 'Disabled'}</p></div>)}</div></div></section>;
+}
+
+function Schedules({ currentUser, babies, setMessage, onChanged }: { currentUser: User; babies: Baby[]; setMessage: (message: string) => void; onChanged: () => void }) {
+  const [uprightTimerEnabled, setUprightTimerEnabled] = useState(currentUser.uprightTimerEnabled === true);
+  const [saving, setSaving] = useState(false);
+  const [remindersEnabled, setRemindersEnabled] = useState(false);
+  const [reminderBusy, setReminderBusy] = useState(false);
+  useEffect(() => { setUprightTimerEnabled(currentUser.uprightTimerEnabled === true); }, [currentUser.uprightTimerEnabled]);
+  useEffect(() => {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+    navigator.serviceWorker.ready.then((registration) => registration.pushManager.getSubscription()).then((subscription) => setRemindersEnabled(Boolean(subscription))).catch(() => undefined);
+  }, []);
+  async function saveUprightTimer() {
+    setSaving(true);
+    try { await api.patch('/api/me/preferences', { uprightTimerEnabled }); setMessage(`15-minute upright timer ${uprightTimerEnabled ? 'enabled' : 'disabled'}.`); onChanged(); }
+    catch (reason) { setMessage((reason as Error).message); }
+    finally { setSaving(false); }
+  }
+  async function toggleReminders() {
+    setReminderBusy(true);
+    try {
+      if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) throw new Error('Install Leo Logger to your home screen first, then reopen it to enable alerts.');
+      const registration = await navigator.serviceWorker.ready;
+      const current = await registration.pushManager.getSubscription();
+      if (current) {
+        await api.delete('/api/reminders/subscribe', { endpoint: current.endpoint });
+        await current.unsubscribe(); setRemindersEnabled(false); setMessage('Feed and timer alerts turned off on this device.'); return;
+      }
+      const permission = await Notification.requestPermission();
+      if (permission !== 'granted') throw new Error('Notifications were not allowed. You can enable them in your phone settings.');
+      const config = await api.get<{ configured: boolean; publicKey: string | null }>('/api/reminders/config');
+      if (!config.configured || !config.publicKey) throw new Error('Alerts are not available yet.');
+      const subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: applicationServerKey(config.publicKey) });
+      await api.post('/api/reminders/subscribe', subscription.toJSON());
+      setRemindersEnabled(true); setMessage('Feed and timer alerts enabled on this device.');
+    } catch (reason) { setMessage((reason as Error).message); }
+    finally { setReminderBusy(false); }
+  }
+  return <section><h2 className="text-2xl font-black">Schedules</h2><p className="mt-1 text-stone-600">Manage feeding reminders and your post-feed routine.</p><div className="mt-4 grid gap-4 lg:grid-cols-2"><div className="space-y-3">{babies.length ? babies.map((baby) => <BabyScheduleCard key={baby.id} baby={baby} setMessage={setMessage} onChanged={onChanged} />) : <div className="card rounded-3xl bg-white p-5 text-stone-600">Add a baby before setting a feeding schedule.</div>}</div><div className="space-y-4"><div className="card rounded-3xl bg-white p-5"><h3 className="text-lg font-black">Alerts on this device</h3><p className="mt-2 text-stone-600">Get notified when a feed is due and when an enabled upright timer finishes.</p><button type="button" onClick={toggleReminders} disabled={reminderBusy} aria-pressed={remindersEnabled} className={`tap mt-5 flex w-full items-center justify-center gap-2 rounded-xl font-black disabled:opacity-50 ${remindersEnabled ? 'bg-[#4f7b68] text-white' : 'bg-stone-100 text-stone-800'}`}>{remindersEnabled ? <Bell size={20} /> : <BellOff size={20} />}{reminderBusy ? 'Saving…' : remindersEnabled ? 'Alerts are on' : 'Turn on alerts'}</button><p className="mt-2 text-sm text-stone-500">Alerts are enabled separately on each phone or tablet.</p></div><div className="card rounded-3xl bg-white p-5"><h3 className="text-lg font-black">After-feeding upright timer</h3><p className="mt-2 text-stone-600">With alerts enabled, you’ll get a reminder after holding the baby upright for 15 minutes following a feed.</p><label className="mt-5 flex min-h-14 cursor-pointer items-center justify-between gap-4 rounded-2xl bg-stone-50 px-4 font-bold"><span>15-minute upright timer</span><input type="checkbox" checked={uprightTimerEnabled} onChange={(event) => setUprightTimerEnabled(event.target.checked)} className="size-6 accent-[#4f7b68]" /></label><button type="button" onClick={saveUprightTimer} disabled={saving} className="tap mt-4 w-full rounded-xl bg-[#4f7b68] font-black text-white disabled:opacity-50">{saving ? 'Saving…' : 'Save timer preference'}</button><p className="mt-2 text-sm text-stone-500">This preference applies to your caregiver account.</p></div></div></div></section>;
+}
+
+function Babies({ babies, setMessage, onChanged, onRemoved }: { babies: Baby[]; setMessage: (message: string) => void; onChanged: () => void; onRemoved: (id: string) => void }) {
+  const [babyName, setBabyName] = useState(''); const [birthDate, setBirthDate] = useState(''); const [removingId, setRemovingId] = useState('');
+  async function addBaby(event: React.FormEvent) { event.preventDefault(); const name = babyName.trim(); try { await api.post('/api/admin/babies', { name, birthDate: birthDate || undefined, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York' }); setBabyName(''); setBirthDate(''); setMessage(`${name} added.`); onChanged(); } catch (reason) { setMessage((reason as Error).message); } }
+  async function removeBaby(baby: Baby) {
+    if (!confirm(`Remove ${baby.name}? ${baby.name} will no longer appear for caregivers. Existing activity history will be preserved.`)) return;
+    setRemovingId(baby.id);
+    try { await api.delete(`/api/admin/babies/${baby.id}`); setMessage(`${baby.name} removed.`); onRemoved(baby.id); }
+    catch (reason) { setMessage((reason as Error).message); }
+    finally { setRemovingId(''); }
+  }
+  return <section><h2 className="text-2xl font-black">Babies</h2><p className="mt-1 text-stone-600">Add a baby or remove one who no longer needs tracking.</p><div className="mt-4 grid gap-5 lg:grid-cols-2"><form onSubmit={addBaby} className="card h-fit rounded-3xl bg-white p-5"><h3 className="text-lg font-black">Add a baby</h3><label className="mt-4 block font-bold">Baby name<input value={babyName} onChange={(event) => setBabyName(event.target.value)} className="mt-1 h-14 w-full rounded-xl border-2 border-stone-200 px-3" required /></label><label className="mt-3 block font-bold">Birth date (optional)<input type="date" value={birthDate} onChange={(event) => setBirthDate(event.target.value)} className="mt-1 h-14 w-full rounded-xl border-2 border-stone-200 px-3" /></label><button className="tap mt-4 w-full rounded-xl bg-[#4f7b68] font-black text-white"><Plus className="mr-2 inline" />Add baby</button></form><div className="space-y-3">{babies.map((baby) => <article key={baby.id} className="card flex items-center justify-between gap-4 rounded-2xl bg-white p-4"><div><p className="font-black">{baby.name}</p><p className="text-sm text-stone-500">{baby.birthDate ? `Born ${baby.birthDate}` : 'Birth date not set'}</p></div><button type="button" onClick={() => removeBaby(baby)} disabled={removingId === baby.id} className="min-h-12 rounded-xl px-3 font-bold text-red-700 disabled:opacity-50" aria-label={`Remove ${baby.name}`}><Trash2 className="mr-1 inline" size={19} />{removingId === baby.id ? 'Removing…' : 'Remove'}</button></article>)}{babies.length === 0 ? <div className="card rounded-3xl bg-white p-5 text-stone-600">No babies have been added yet.</div> : null}</div></div></section>;
 }
 
 function BabyScheduleCard({ baby, setMessage, onChanged }: { baby: Baby; setMessage: (message: string) => void; onChanged: () => void }) {
   const [minutes, setMinutes] = useState(baby.feedingIntervalMinutes || 120);
   async function save() {
-    try { await api.patch(`/api/admin/babies/${baby.id}`, { feedingIntervalMinutes: minutes }); setMessage(`${baby.name}'s feeding reminder is now every ${minutes / 60} hours.`); onChanged(); }
+    try { await api.patch(`/api/schedules/${baby.id}`, { feedingIntervalMinutes: minutes }); setMessage(`${baby.name}'s feeding reminder is now every ${number(minutes / 60)} hours.`); onChanged(); }
     catch (reason) { setMessage((reason as Error).message); }
   }
-  return <div className="card rounded-2xl bg-white p-4"><p className="font-black">{baby.name}</p><p className="text-sm text-stone-500">{baby.birthDate ? `Born ${baby.birthDate} · ` : ''}{baby.timezone}</p><label className="mt-3 block font-bold">Feed reminder interval<div className="mt-1 flex gap-2"><input type="number" min={15} max={720} step={15} value={minutes} onChange={(event) => setMinutes(Number(event.target.value))} className="h-12 min-w-0 flex-1 rounded-xl border-2 border-stone-200 px-3" /><span className="grid place-items-center text-sm text-stone-500">minutes</span><button onClick={save} className="rounded-xl bg-[#4f7b68] px-4 font-black text-white">Save</button></div></label><p className="mt-2 text-sm text-stone-500">Currently every {minutes / 60} hours. A feed automatically resets the timer.</p></div>;
+  return <div className="card rounded-2xl bg-white p-4"><p className="font-black">{baby.name}</p><p className="text-sm text-stone-500">{baby.birthDate ? `Born ${baby.birthDate} · ` : ''}{baby.timezone}</p><label className="mt-3 block font-bold">Feed reminder interval<div className="mt-1 flex gap-2"><input type="number" min={15} max={720} step={15} value={minutes} onChange={(event) => setMinutes(Number(event.target.value))} className="h-12 min-w-0 flex-1 rounded-xl border-2 border-stone-200 px-3" /><span className="grid place-items-center text-sm text-stone-500">minutes</span><button onClick={save} className="rounded-xl bg-[#4f7b68] px-4 font-black text-white">Save</button></div></label><p className="mt-2 text-sm text-stone-500">Currently every {number(minutes / 60)} hours. A feed automatically resets the timer.</p></div>;
 }
 
 function CaregiverCard({ user, babies, onChanged, setMessage }: { user: User; babies: Baby[]; onChanged: () => void; setMessage: (message: string) => void }) {

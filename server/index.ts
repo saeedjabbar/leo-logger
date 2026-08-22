@@ -18,6 +18,7 @@ import type { Baby, BabyEvent, Challenge, Passkey, PushSubscriptionRecord, Sessi
 import { pushSubscriptionId, remindersConfigured, startReminderScheduler } from './reminders.js';
 import { azureChatConfigured, interpretFallback, interpretWithAzure, toEventInputs } from './chat.js';
 import { azureSpeechConfigured, transcribeWav } from './speech.js';
+import { babyCreateSchema, babyDeactivationError, babyUpdateSchema, isValidTimezone, scheduleUpdateSchema, userUpdatesForBabyDeactivation } from './babies.js';
 
 const store = createStore();
 const app = express();
@@ -31,6 +32,16 @@ const eventStreams = new Map<string, Set<express.Response>>();
 function publishBabyUpdate(babyId: string, action: 'created' | 'updated' | 'deleted' | 'imported') {
   const message = `event: events\ndata: ${JSON.stringify({ action, at: new Date().toISOString() })}\n\n`;
   for (const stream of eventStreams.get(babyId) || []) stream.write(message);
+}
+
+async function softDeactivateBaby(baby: Baby) {
+  const [babies, users] = await Promise.all([store.list<Baby>('babies'), store.list<User>('users')]);
+  const error = babyDeactivationError(babies, users, baby.id);
+  if (error) return { error };
+  const updated: Baby = { ...baby, active: false };
+  await store.put('babies', baby.id, updated);
+  for (const user of userUpdatesForBabyDeactivation(babies, users, baby.id)) await store.put('users', user.id, user);
+  return { baby: updated };
 }
 
 declare global {
@@ -197,6 +208,49 @@ app.patch('/api/me/preferences', requireUser, async (request, response) => {
   const user = { ...request.currentUser!, ...parsed.data };
   await store.put('users', user.id, user);
   response.json({ user: publicUser(user) });
+});
+
+app.get('/api/schedules/:babyId', requireUser, async (request, response) => {
+  const user = request.currentUser!;
+  const babyId = String(request.params.babyId);
+  if (!canAccessBaby(user, babyId)) return response.status(403).json({ error: 'Access denied' });
+  const baby = await store.get<Baby>('babies', babyId);
+  if (!baby?.active) return response.status(404).json({ error: 'Baby not found' });
+  response.json({
+    schedule: {
+      babyId,
+      feedingIntervalMinutes: baby.feedingIntervalMinutes,
+      uprightTimerEnabled: user.uprightTimerEnabled === true,
+    },
+  });
+});
+
+app.patch('/api/schedules/:babyId', requireUser, async (request, response) => {
+  const user = request.currentUser!;
+  const babyId = String(request.params.babyId);
+  if (!canAccessBaby(user, babyId)) return response.status(403).json({ error: 'Access denied' });
+  const parsed = scheduleUpdateSchema.safeParse(request.body);
+  if (!parsed.success) return response.status(400).json({ error: 'Feeding interval must be between 15 minutes and 12 hours' });
+  if (parsed.data.feedingIntervalMinutes !== undefined && user.role !== 'admin') {
+    return response.status(403).json({ error: 'Only an admin can change the feeding interval' });
+  }
+  const baby = await store.get<Baby>('babies', babyId);
+  if (!baby?.active) return response.status(404).json({ error: 'Baby not found' });
+  if (parsed.data.feedingIntervalMinutes !== undefined) {
+    baby.feedingIntervalMinutes = parsed.data.feedingIntervalMinutes;
+    await store.put('babies', baby.id, baby);
+  }
+  if (parsed.data.uprightTimerEnabled !== undefined) {
+    user.uprightTimerEnabled = parsed.data.uprightTimerEnabled;
+    await store.put('users', user.id, user);
+  }
+  response.json({
+    schedule: {
+      babyId,
+      feedingIntervalMinutes: baby.feedingIntervalMinutes,
+      uprightTimerEnabled: user.uprightTimerEnabled === true,
+    },
+  });
 });
 
 app.get('/api/reminders/config', requireUser, (_request, response) => {
@@ -444,11 +498,14 @@ app.patch('/api/admin/users/:id', requireAdmin, async (request, response) => {
   response.json({ user: publicUser(updated) });
 });
 
-app.get('/api/admin/babies', requireAdmin, async (_request, response) => response.json({ babies: await store.list<Baby>('babies') }));
+app.get('/api/admin/babies', requireAdmin, async (request, response) => {
+  const babies = await store.list<Baby>('babies');
+  response.json({ babies: request.query.includeInactive === 'true' ? babies : babies.filter((baby) => baby.active) });
+});
 app.post('/api/admin/babies', requireAdmin, async (request, response) => {
-  const parsed = z.object({ name: z.string().min(1).max(80), birthDate: z.string().optional(), timezone: z.string().default('America/New_York'), feedingIntervalMinutes: z.number().int().min(15).max(720).default(120) }).safeParse(request.body);
-  if (!parsed.success) return response.status(400).json({ error: 'Enter a baby name' });
-  try { new Intl.DateTimeFormat('en', { timeZone: parsed.data.timezone }); } catch { return response.status(400).json({ error: 'Invalid timezone' }); }
+  const parsed = babyCreateSchema.safeParse(request.body);
+  if (!parsed.success) return response.status(400).json({ error: 'Enter a valid name, birth date, timezone, and feeding interval' });
+  if (!isValidTimezone(parsed.data.timezone)) return response.status(400).json({ error: 'Invalid timezone' });
   const baby: Baby = { id: randomUUID(), ...parsed.data, active: true, createdAt: new Date().toISOString() };
   await store.put('babies', baby.id, baby);
   response.status(201).json({ baby });
@@ -457,12 +514,26 @@ app.post('/api/admin/babies', requireAdmin, async (request, response) => {
 app.patch('/api/admin/babies/:id', requireAdmin, async (request, response) => {
   const baby = await store.get<Baby>('babies', String(request.params.id));
   if (!baby) return response.status(404).json({ error: 'Baby not found' });
-  const parsed = z.object({ name: z.string().min(1).max(80).optional(), birthDate: z.string().optional(), timezone: z.string().optional(), feedingIntervalMinutes: z.number().int().min(15).max(720).optional(), active: z.boolean().optional() }).safeParse(request.body);
-  if (!parsed.success) return response.status(400).json({ error: 'Feeding interval must be between 15 minutes and 12 hours' });
-  if (parsed.data.timezone) try { new Intl.DateTimeFormat('en', { timeZone: parsed.data.timezone }); } catch { return response.status(400).json({ error: 'Invalid timezone' }); }
+  const parsed = babyUpdateSchema.safeParse(request.body);
+  if (!parsed.success) return response.status(400).json({ error: 'Enter a valid name, birth date, timezone, and feeding interval (15 minutes to 12 hours)' });
+  if (parsed.data.timezone && !isValidTimezone(parsed.data.timezone)) return response.status(400).json({ error: 'Invalid timezone' });
+  if (parsed.data.active === false) {
+    const result = await softDeactivateBaby(baby);
+    if (result.error) return response.status(409).json({ error: result.error });
+    return response.json({ baby: result.baby });
+  }
   const updated = { ...baby, ...parsed.data };
   await store.put('babies', baby.id, updated);
   response.json({ baby: updated });
+});
+
+app.delete('/api/admin/babies/:id', requireAdmin, async (request, response) => {
+  const baby = await store.get<Baby>('babies', String(request.params.id));
+  if (!baby) return response.status(404).json({ error: 'Baby not found' });
+  if (!baby.active) return response.json({ baby });
+  const result = await softDeactivateBaby(baby);
+  if (result.error) return response.status(409).json({ error: result.error });
+  response.json({ baby: result.baby });
 });
 
 app.post('/api/admin/import', requireAdmin, async (request, response) => {

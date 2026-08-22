@@ -5,7 +5,9 @@ A privacy-minded, mobile-first PWA for logging baby feeds, diapers, and sleep. I
 ## Highlights
 
 - One-tap logging plus phrases such as “I fed him 2 oz at 2:10am.”
-- An optional 15-minute upright countdown starts after each feed and can send a completion alert to subscribed devices.
+- Feeding intervals, per-device alerts, and the optional 15-minute upright reminder live together under Admin → Schedules.
+- Admin → Babies supports adding and safely removing baby profiles while preserving historical activity.
+- Admins can tap the baby name on Home to edit the baby’s name, birth date, and timezone.
 - Tap a recent activity or its relative time to correct the exact time and details; caregiver edits are limited to entries they logged.
 - Caregiver devices live-update through a private event stream, with focus and periodic refresh fallbacks for suspended mobile PWAs.
 - Pull down from the top of the home logger for a manual mobile refresh.
@@ -55,7 +57,7 @@ The script provisions a GRS Storage account, ACR, Container Apps environment, ma
 
 Only models sold and billed directly by Azure should be configured. Microsoft states those models are eligible for startup credits, while partner, community, and Azure Marketplace models are not. This project does not integrate Anthropic, partner catalogs, Marketplace offers, or user-supplied API keys.
 
-Each baby has a configurable feeding interval. Caregivers enable push reminders per device by tapping the bell on the logger. On iPhone, install the PWA with Safari → Share → Add to Home Screen before enabling notifications.
+Each baby has a configurable feeding interval under Admin → Schedules. Enable push alerts there on each device. On iPhone, install the PWA with Safari → Share → Add to Home Screen before enabling notifications.
 
 After admins change their temporary password, rotate or remove the bootstrap secret in Azure. Add Alexa using [alexa/README.md](alexa/README.md).
 
