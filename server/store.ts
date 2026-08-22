@@ -3,7 +3,7 @@ import { DefaultAzureCredential } from '@azure/identity';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
-export type Collection = 'babies' | 'users' | 'sessions' | 'passkeys' | 'challenges' | 'events' | 'revisions' | 'pushSubscriptions' | 'reminderStates' | 'meta';
+export type Collection = 'babies' | 'users' | 'sessions' | 'passkeys' | 'challenges' | 'events' | 'revisions' | 'pushSubscriptions' | 'reminderStates' | 'chatMessages' | 'meta';
 
 export interface Store {
   initialize(): Promise<void>;

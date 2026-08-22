@@ -5,6 +5,8 @@ A privacy-minded, mobile-first PWA for logging baby feeds, diapers, and sleep. I
 ## Highlights
 
 - One-tap logging plus phrases such as “I fed him 2 oz at 2:10am.”
+- Chat history is private to each caregiver and baby, persists between sessions, and can be cleared without deleting activity logs.
+- Admin → Settings includes a household-wide AI privacy switch; one-tap and simple rule-based text logging continue to work when AI is off.
 - Feeding intervals, per-device alerts, and the optional 15-minute upright reminder live together under Admin → Schedules.
 - Admin → Babies supports adding and safely removing baby profiles while preserving historical activity.
 - Admins can tap the baby name on Home to edit the baby’s name, birth date, and timezone.
@@ -32,7 +34,7 @@ npm run dev
 
 Open `http://localhost:5173`. On first start, the accounts in `BOOTSTRAP_ADMINS` are created with the temporary bootstrap password. Each admin should change it and register a passkey from Admin → Settings.
 
-For AI features, set the Azure OpenAI deployment and the Azure Speech custom-domain endpoint/resource ID shown below. Local development authenticates with `az login`; production uses the Container App managed identity. API keys and third-party model endpoints are intentionally unsupported.
+For hosted AI features, set the Azure OpenAI deployment and the Azure Speech custom-domain endpoint/resource ID shown below. Local development authenticates with `az login`; production uses the Container App managed identity. API keys and third-party model endpoints are intentionally unsupported. Provider access is isolated behind a capability boundary so paid or bring-your-own-provider options can be added later without coupling them to core logging; no user-supplied key flow is exposed today.
 
 ## Production deployment
 

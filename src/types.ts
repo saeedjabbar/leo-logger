@@ -7,7 +7,7 @@ export interface BabyEvent {
   diaper?: 'pee' | 'poop' | 'both'; notes?: string; createdBy: string; channel: 'pwa' | 'alexa' | 'import' | 'chat' | 'voice';
   createdAt: string; updatedAt: string; importWarnings?: string[];
 }
-export interface MeResponse { user: User; babies: Baby[]; activeSleep?: BabyEvent }
+export interface MeResponse { user: User; babies: Baby[]; activeSleep?: BabyEvent; aiEnabled: boolean }
 export interface Insights {
   totals: { events: number; feeds: number; ounces: number; formulaOunces: number; breastMilkOunces: number; comboOunces: number; wet: number; dirty: number; sleeps: number; sleepHours: number; longestSleepHours: number };
   feedIntervals: { averageHours: number; medianHours: number };

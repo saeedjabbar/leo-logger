@@ -14,11 +14,13 @@ import { hashSecret, verifySecret } from './security.js';
 import { eventInputSchema, createEvent, reviseEvent, canAccessBaby, canEditEvent, validateEventDetails } from './events.js';
 import { calculateInsights } from './analytics.js';
 import { importHuckleberry } from './importer.js';
-import type { Baby, BabyEvent, Challenge, Passkey, PushSubscriptionRecord, Session, User } from './types.js';
+import type { Baby, BabyEvent, Challenge, ChatMessage, Passkey, PushSubscriptionRecord, Session, User } from './types.js';
 import { pushSubscriptionId, remindersConfigured, startReminderScheduler } from './reminders.js';
 import { azureChatConfigured, interpretFallback, interpretWithAzure, toEventInputs } from './chat.js';
 import { azureSpeechConfigured, transcribeWav } from './speech.js';
 import { babyCreateSchema, babyDeactivationError, babyUpdateSchema, isValidTimezone, scheduleUpdateSchema, userUpdatesForBabyDeactivation } from './babies.js';
+import { getAiSettings, resolveAiAccess, setAiEnabled } from './ai.js';
+import { allChatMessagesForUser, chatHistoryForUser, newChatMessages, publicChatMessage } from './chat-history.js';
 
 const store = createStore();
 const app = express();
@@ -195,11 +197,11 @@ app.post('/api/auth/password/change', requireAdmin, async (request, response) =>
 });
 
 app.get('/api/me', requireUser, async (request, response) => {
-  const [babies, events] = await Promise.all([store.list<Baby>('babies'), store.list<BabyEvent>('events')]);
+  const [babies, events, aiSettings] = await Promise.all([store.list<Baby>('babies'), store.list<BabyEvent>('events'), getAiSettings(store)]);
   const user = request.currentUser!;
   const allowed = babies.filter((baby) => baby.active && canAccessBaby(user, baby.id));
   const activeSleep = events.find((event) => allowed.some((baby) => baby.id === event.babyId) && event.type === 'sleep' && !event.endAt && !event.deletedAt);
-  response.json({ user: publicUser(user), babies: allowed, activeSleep });
+  response.json({ user: publicUser(user), babies: allowed, activeSleep, aiEnabled: aiSettings.aiEnabled });
 });
 
 app.patch('/api/me/preferences', requireUser, async (request, response) => {
@@ -371,25 +373,55 @@ app.post('/api/chat', requireUser, async (request, response) => {
   const baby = await store.get<Baby>('babies', parsed.data.babyId);
   if (!baby?.active) return response.status(404).json({ error: 'Baby not found' });
   const events = await store.list<BabyEvent>('events');
+  const aiAccess = await resolveAiAccess(store, 'activity_interpretation');
   let result;
-  let provider: 'azure-openai' | 'built-in' = 'azure-openai';
-  try { result = await interpretWithAzure(parsed.data.message, baby, events); }
-  catch (error) {
-    provider = 'built-in';
+  let provider: 'azure-openai' | 'built-in' = 'built-in';
+  if (aiAccess.enabled) try {
+    result = await interpretWithAzure(parsed.data.message, baby, events);
+    provider = 'azure-openai';
+  } catch (error) {
     console.error(JSON.stringify({ level: 'warn', message: `AI interpretation unavailable: ${(error as Error).message}` }));
     result = interpretFallback(parsed.data.message, baby);
-  }
+  } else result = interpretFallback(parsed.data.message, baby);
   const requestId = randomUUID();
   const created: BabyEvent[] = [];
   if (!result.clarificationNeeded) for (const input of toEventInputs(result, baby.id, requestId)) {
     created.push(await createEvent(store, input, user, parsed.data.inputMode));
   }
   if (created.length) publishBabyUpdate(baby.id, 'created');
-  response.json({ reply: result.reply, events: created, clarificationNeeded: result.clarificationNeeded, provider, aiConfigured: azureChatConfigured() });
+  const messages = newChatMessages({
+    userId: user.id, babyId: baby.id, userText: parsed.data.message, assistantText: result.reply,
+    provider, eventIds: created.map((event) => event.id),
+  });
+  for (const message of messages) await store.put('chatMessages', message.id, message);
+  response.json({ reply: result.reply, events: created, clarificationNeeded: result.clarificationNeeded, provider, aiEnabled: aiAccess.enabled, aiConfigured: azureChatConfigured(), messages: messages.map(publicChatMessage) });
+});
+
+app.get('/api/chat/history', requireUser, async (request, response) => {
+  const user = request.currentUser!;
+  const babyIdResult = z.string().uuid().safeParse(String(request.query.babyId || user.defaultBabyId || ''));
+  if (!babyIdResult.success) return response.status(400).json({ error: 'Choose a valid baby chat' });
+  const babyId = babyIdResult.data;
+  if (!canAccessBaby(user, babyId)) return response.status(403).json({ error: 'Access denied' });
+  const messages = chatHistoryForUser(await store.list<ChatMessage>('chatMessages'), user.id, babyId);
+  response.setHeader('Cache-Control', 'private, no-store');
+  response.json({ messages: messages.map(publicChatMessage) });
+});
+
+app.delete('/api/chat/history', requireUser, async (request, response) => {
+  const parsed = z.object({ babyId: z.string().uuid() }).safeParse(request.body);
+  if (!parsed.success) return response.status(400).json({ error: 'Choose a valid baby chat to clear' });
+  const user = request.currentUser!;
+  if (!canAccessBaby(user, parsed.data.babyId)) return response.status(403).json({ error: 'Access denied' });
+  const messages = allChatMessagesForUser(await store.list<ChatMessage>('chatMessages'), user.id, parsed.data.babyId);
+  for (const message of messages) await store.remove('chatMessages', message.id);
+  response.json({ deleted: messages.length });
 });
 
 app.get('/api/insights/ai', requireUser, async (request, response) => {
   const user = request.currentUser!;
+  const aiAccess = await resolveAiAccess(store, 'insights');
+  if (!aiAccess.enabled) return response.status(403).json({ error: 'AI features are turned off for this household', code: 'AI_DISABLED' });
   const babyId = String(request.query.babyId || user.defaultBabyId || '');
   const requestedDays = Number(request.query.days || 7);
   const days = Number.isInteger(requestedDays) ? Math.min(180, Math.max(1, requestedDays)) : 7;
@@ -414,6 +446,8 @@ app.get('/api/insights/ai', requireUser, async (request, response) => {
 });
 
 app.post('/api/transcribe', requireUser, express.raw({ type: 'audio/wav', limit: '4mb' }), async (request, response) => {
+  const aiAccess = await resolveAiAccess(store, 'speech_transcription');
+  if (!aiAccess.enabled) return response.status(403).json({ error: 'AI features are turned off for this household', code: 'AI_DISABLED' });
   if (!azureSpeechConfigured()) return response.status(503).json({ error: 'Voice transcription is not configured' });
   try {
     const transcript = await transcribeWav(request.body as Buffer);
@@ -469,6 +503,18 @@ app.get('/api/insights', requireAdmin, async (request, response) => {
 });
 
 app.get('/api/admin/users', requireAdmin, async (_request, response) => response.json({ users: (await store.list<User>('users')).map(publicUser) }));
+
+app.get('/api/admin/ai-settings', requireAdmin, async (_request, response) => {
+  const settings = await getAiSettings(store);
+  response.json({ settings: { aiEnabled: settings.aiEnabled, providerMode: settings.providerMode } });
+});
+
+app.patch('/api/admin/ai-settings', requireAdmin, async (request, response) => {
+  const parsed = z.object({ aiEnabled: z.boolean() }).safeParse(request.body);
+  if (!parsed.success) return response.status(400).json({ error: 'Choose whether AI features are enabled' });
+  const settings = await setAiEnabled(store, parsed.data.aiEnabled, request.currentUser!.id);
+  response.json({ settings: { aiEnabled: settings.aiEnabled, providerMode: settings.providerMode } });
+});
 
 app.post('/api/admin/users', requireAdmin, async (request, response) => {
   const parsed = z.object({ displayName: z.string().min(1).max(80), pin: z.string().regex(/^\d{6}$/), allowedBabyIds: z.array(z.string().uuid()).min(1), defaultBabyId: z.string().uuid() }).safeParse(request.body);

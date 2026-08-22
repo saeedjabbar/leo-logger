@@ -14,6 +14,26 @@ export interface Baby {
   createdAt: string;
 }
 
+export interface AiSettings {
+  id: 'ai-settings';
+  aiEnabled: boolean;
+  providerMode: 'hosted';
+  updatedAt: string;
+  updatedBy?: string;
+}
+
+export interface ChatMessage {
+  id: string;
+  exchangeId: string;
+  userId: string;
+  babyId: string;
+  role: 'user' | 'assistant';
+  text: string;
+  provider?: 'azure-openai' | 'built-in';
+  eventIds?: string[];
+  createdAt: string;
+}
+
 export interface PushSubscriptionRecord {
   id: string;
   userId: string;

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { startRegistration } from '@simplewebauthn/browser';
-import { ArrowLeft, Baby as BabyIcon, BarChart3, Bell, BellOff, CalendarClock, Download, FileUp, KeyRound, Plus, RefreshCw, Sparkles, Trash2, Users } from 'lucide-react';
+import { ArrowLeft, Baby as BabyIcon, BarChart3, Bell, BellOff, CalendarClock, Download, FileUp, KeyRound, Plus, RefreshCw, Trash2, Users } from 'lucide-react';
 import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { api } from '../api';
 import type { Baby, BabyEvent, Insights, User } from '../types';
@@ -67,19 +67,6 @@ export default function Admin({ currentUser, initialBabies, onBack, onChanged }:
 }
 
 function Overview({ insights, range, setRange, babyId }: { insights?: Insights; range: number; setRange: (value: number) => void; babyId?: string }) {
-  const [aiInsight, setAiInsight] = useState('');
-  const [aiProvider, setAiProvider] = useState('');
-  const [aiBusy, setAiBusy] = useState(false);
-  const [aiError, setAiError] = useState('');
-  async function generateAiInsight() {
-    if (!babyId) return;
-    setAiBusy(true); setAiError('');
-    try {
-      const result = await api.get<{ insight: string; provider: string }>(`/api/insights/ai?babyId=${babyId}&days=${range}`);
-      setAiInsight(result.insight); setAiProvider(result.provider);
-    } catch (reason) { setAiError((reason as Error).message); }
-    finally { setAiBusy(false); }
-  }
   if (!insights) return <p className="p-10 text-center">Loading insights…</p>;
   const cards = [
     ['Total ounces', `${number(insights.totals.ounces)} oz`], ['Feeds', String(insights.totals.feeds)], ['Wet diapers', String(insights.totals.wet)], ['Dirty diapers', String(insights.totals.dirty)],
@@ -87,7 +74,6 @@ function Overview({ insights, range, setRange, babyId }: { insights?: Insights; 
   ];
   return <section><div className="mb-4 flex items-center justify-between"><h2 className="text-2xl font-black">Last {range} days</h2><select value={range} onChange={(event) => setRange(Number(event.target.value))} className="h-12 rounded-xl border bg-white px-3 font-bold"><option value={7}>7 days</option><option value={14}>14 days</option><option value={30}>30 days</option></select></div>
     <div className="grid grid-cols-2 gap-3 md:grid-cols-4">{cards.map(([label, value]) => <article key={label} className="card rounded-2xl bg-white p-4"><p className="text-sm font-bold text-stone-500">{label}</p><p className="mt-1 text-2xl font-black">{value}</p></article>)}</div>
-    <article className="card mt-5 rounded-3xl bg-[#f2efe9] p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-[#725d3c]"><Sparkles size={18} />Azure AI analysis</p><h3 className="mt-1 text-xl font-black">Patterns from the last {range} days</h3></div><button type="button" onClick={generateAiInsight} disabled={aiBusy} className="min-h-12 rounded-xl bg-white px-4 font-black text-[#4f7b68] shadow-sm disabled:opacity-50">{aiBusy ? 'Analyzing…' : aiInsight ? 'Refresh analysis' : 'Analyze this period'}</button></div>{aiInsight ? <p className="mt-4 max-w-4xl text-lg leading-relaxed text-stone-700">{aiInsight}</p> : <p className="mt-3 text-stone-600">Generate a concise explanation of the feeding, diaper, and sleep patterns behind these charts.</p>}{aiProvider ? <p className="mt-3 text-xs font-bold uppercase tracking-wide text-stone-500">{aiProvider === 'azure-openai' ? 'Generated with Azure OpenAI' : 'Built-in summary'}</p> : null}{aiError ? <p role="alert" className="mt-3 font-bold text-red-700">{aiError}</p> : null}<p className="mt-2 text-xs text-stone-500">Descriptive only—not medical advice.</p></article>
     <div className="mt-5 grid gap-5 lg:grid-cols-2"><article className="card rounded-3xl bg-white p-4"><h3 className="mb-4 text-lg font-black">Feeding and sleep trend</h3><div className="h-72"><ResponsiveContainer width="100%" height="100%"><LineChart data={insights.daily}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="date" tickFormatter={(value) => value.slice(5)} /><YAxis /><Tooltip /><Legend /><Line type="monotone" dataKey="ounces" stroke="#d28a3c" strokeWidth={3} /><Line type="monotone" dataKey="sleepHours" stroke="#776c9b" strokeWidth={3} /></LineChart></ResponsiveContainer></div></article>
       <article className="card rounded-3xl bg-white p-4"><h3 className="mb-4 text-lg font-black">Diaper trend</h3><div className="h-72"><ResponsiveContainer width="100%" height="100%"><BarChart data={insights.daily}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="date" tickFormatter={(value) => value.slice(5)} /><YAxis allowDecimals={false} /><Tooltip /><Legend /><Bar dataKey="wet" fill="#58a7d1" /><Bar dataKey="dirty" fill="#a8794f" /></BarChart></ResponsiveContainer></div></article>
       <article className="card rounded-3xl bg-white p-4 lg:col-span-2"><h3 className="mb-4 text-lg font-black">Typical activity by hour</h3><div className="h-72"><ResponsiveContainer width="100%" height="100%"><BarChart data={insights.hourly}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="hour" tickFormatter={(hour) => `${hour % 12 || 12}${hour < 12 ? 'a' : 'p'}`} /><YAxis allowDecimals={false} /><Tooltip /><Legend /><Bar dataKey="feeds" fill="#d28a3c" /><Bar dataKey="diapers" fill="#58a7d1" /><Bar dataKey="sleeps" fill="#776c9b" /></BarChart></ResponsiveContainer></div></article></div>
@@ -197,7 +183,20 @@ function CaregiverCard({ user, babies, onChanged, setMessage }: { user: User; ba
 
 function Settings({ setMessage, onChanged }: { setMessage: (message: string) => void; onChanged: () => void }) {
   const [currentPassword, setCurrentPassword] = useState(''); const [newPassword, setNewPassword] = useState('');
+  const [aiEnabled, setAiEnabled] = useState<boolean>(); const [aiBusy, setAiBusy] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    api.get<{ settings: { aiEnabled: boolean } }>('/api/admin/ai-settings').then((result) => { if (!cancelled) setAiEnabled(result.settings.aiEnabled); }).catch((reason) => { if (!cancelled) setMessage((reason as Error).message); });
+    return () => { cancelled = true; };
+  }, [setMessage]);
   async function changePassword(event: React.FormEvent) { event.preventDefault(); try { await api.post('/api/auth/password/change', { currentPassword, newPassword }); setCurrentPassword(''); setNewPassword(''); setMessage('Password changed.'); onChanged(); } catch (reason) { setMessage((reason as Error).message); } }
   async function addPasskey() { try { const result = await api.post<{ challengeId: string; options: Parameters<typeof startRegistration>[0]['optionsJSON'] }>('/api/auth/passkeys/register/options'); const credential = await startRegistration({ optionsJSON: result.options }); await api.post('/api/auth/passkeys/register/verify', { challengeId: result.challengeId, response: credential }); setMessage('Passkey added to this account.'); } catch (reason) { setMessage((reason as Error).message); } }
-  return <section className="grid gap-5 lg:grid-cols-2"><form onSubmit={changePassword} className="card rounded-3xl bg-white p-5"><h2 className="text-xl font-black">Change recovery password</h2><label className="mt-4 block font-bold">Current password<input type="password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} autoComplete="current-password" className="mt-1 h-14 w-full rounded-xl border-2 border-stone-200 px-3" /></label><label className="mt-3 block font-bold">New password<input type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} minLength={12} autoComplete="new-password" className="mt-1 h-14 w-full rounded-xl border-2 border-stone-200 px-3" /></label><button className="tap mt-4 w-full rounded-xl bg-[#4f7b68] font-black text-white">Change password</button></form><div className="card rounded-3xl bg-white p-5"><h2 className="text-xl font-black">Face ID or passkey</h2><p className="mt-2 text-stone-600">Register this phone or computer for quick, secure admin sign-in.</p><button onClick={addPasskey} className="tap mt-5 w-full rounded-xl border-2 border-[#4f7b68] font-black text-[#4f7b68]"><KeyRound className="mr-2 inline" />Add a passkey</button></div></section>;
+  async function toggleAi() {
+    if (aiEnabled === undefined) return;
+    const next = !aiEnabled; setAiBusy(true);
+    try { const result = await api.patch<{ settings: { aiEnabled: boolean } }>('/api/admin/ai-settings', { aiEnabled: next }); setAiEnabled(result.settings.aiEnabled); setMessage(`AI features turned ${result.settings.aiEnabled ? 'on' : 'off'} for this household.`); onChanged(); }
+    catch (reason) { setMessage((reason as Error).message); }
+    finally { setAiBusy(false); }
+  }
+  return <section className="grid gap-5 lg:grid-cols-2"><form onSubmit={changePassword} className="card rounded-3xl bg-white p-5"><h2 className="text-xl font-black">Change recovery password</h2><label className="mt-4 block font-bold">Current password<input type="password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} autoComplete="current-password" className="mt-1 h-14 w-full rounded-xl border-2 border-stone-200 px-3" /></label><label className="mt-3 block font-bold">New password<input type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} minLength={12} autoComplete="new-password" className="mt-1 h-14 w-full rounded-xl border-2 border-stone-200 px-3" /></label><button className="tap mt-4 w-full rounded-xl bg-[#4f7b68] font-black text-white">Change password</button></form><div className="card rounded-3xl bg-white p-5"><h2 className="text-xl font-black">Face ID or passkey</h2><p className="mt-2 text-stone-600">Register this phone or computer for quick, secure admin sign-in.</p><button onClick={addPasskey} className="tap mt-5 w-full rounded-xl border-2 border-[#4f7b68] font-black text-[#4f7b68]"><KeyRound className="mr-2 inline" />Add a passkey</button></div><div className="card rounded-3xl bg-white p-5 lg:col-span-2"><h2 className="text-xl font-black">AI privacy</h2><p className="mt-2 max-w-3xl text-stone-600">Control hosted AI insights, natural-language interpretation, and voice transcription for this household. Simple typed activity logging and every one-tap button keep working when this is off.</p><div className="mt-5 flex flex-wrap items-center justify-between gap-4 rounded-2xl bg-stone-50 p-4"><div><p className="font-black">AI features</p><p className="text-sm text-stone-500">{aiEnabled === undefined ? 'Checking current setting…' : aiEnabled ? 'Enabled for this household' : 'Disabled for this household'}</p></div><button type="button" onClick={toggleAi} disabled={aiBusy || aiEnabled === undefined} aria-pressed={aiEnabled === true} className={`min-h-12 min-w-24 rounded-full px-5 font-black disabled:opacity-50 ${aiEnabled ? 'bg-[#4f7b68] text-white' : 'bg-stone-200 text-stone-800'}`}>{aiBusy ? 'Saving…' : aiEnabled ? 'On' : 'Off'}</button></div><p className="mt-3 text-sm text-stone-500">Only an admin can change this household-wide setting. Provider choices and billing are intentionally not exposed yet.</p></div></section>;
 }
