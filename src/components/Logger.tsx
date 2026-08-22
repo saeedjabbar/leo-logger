@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Baby as BabyIcon, BedDouble, Bell, BellOff, Droplets, MessageCircle, Milk, Pencil, RefreshCw, Settings, Sparkles } from 'lucide-react';
+import { Baby as BabyIcon, BedDouble, Bell, BellOff, Droplets, MessageCircle, Milk, Pencil, RefreshCw, Settings, Sparkles, Timer } from 'lucide-react';
 import { api } from '../api';
 import { flushEvents, queueEvent } from '../offline';
 import type { Baby, BabyEvent, User } from '../types';
@@ -29,6 +29,31 @@ function durationLabel(milliseconds: number) {
   return `${hours} hr${hours === 1 ? '' : 's'}${minutes % 60 ? ` ${minutes % 60} min` : ''}`;
 }
 
+function UprightTimerCard({ latestFeedAt, enabled, alertsEnabled, busy, onToggle }: { latestFeedAt?: string; enabled: boolean; alertsEnabled: boolean; busy: boolean; onToggle: () => void }) {
+  const [clock, setClock] = useState(() => Date.now());
+  useEffect(() => {
+    if (!enabled || !latestFeedAt) return;
+    const feedAt = new Date(latestFeedAt).getTime();
+    if (Date.now() - feedAt >= 60 * 60_000) return;
+    const timer = window.setInterval(() => {
+      const next = Date.now();
+      setClock(next);
+      if (next - feedAt >= 60 * 60_000) window.clearInterval(timer);
+    }, 1_000);
+    return () => window.clearInterval(timer);
+  }, [enabled, latestFeedAt]);
+  const feedAt = latestFeedAt ? new Date(latestFeedAt).getTime() : undefined;
+  const dueAt = feedAt === undefined ? undefined : feedAt + 15 * 60_000;
+  const recent = feedAt !== undefined && clock - feedAt < 60 * 60_000;
+  const remainingSeconds = dueAt === undefined ? 0 : Math.max(0, Math.ceil((dueAt - clock) / 1_000));
+  const countdown = `${Math.floor(remainingSeconds / 60)}:${String(remainingSeconds % 60).padStart(2, '0')}`;
+  const status = !enabled ? 'Timer is off' : !recent ? 'Starts after the next feed' : remainingSeconds > 0 ? `Hold upright for ${countdown}` : 'Upright time complete';
+  return <section className={`card mb-4 rounded-3xl p-4 ${enabled && recent && remainingSeconds > 0 ? 'bg-[#e9f3ee]' : 'bg-white'}`} aria-label="Post-feed upright timer">
+    <div className="flex items-center justify-between gap-3"><div><p className="flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-[#4f7b68]"><Timer size={18} />15-minute upright timer</p><p className="mt-1 text-xl font-black tabular-nums">{status}</p></div><button type="button" onClick={onToggle} disabled={busy} aria-pressed={enabled} className={`min-h-12 min-w-20 rounded-full px-4 font-black disabled:opacity-50 ${enabled ? 'bg-[#4f7b68] text-white' : 'bg-stone-100 text-stone-700'}`}>{busy ? '…' : enabled ? 'On' : 'Off'}</button></div>
+    <p className="mt-2 text-sm text-stone-600">Starts automatically after each feed.{enabled ? alertsEnabled ? ' This device will alert you when time is up.' : ' Enable notifications with the bell above for a completion alert.' : ''}</p>
+  </section>;
+}
+
 function applicationServerKey(value: string) {
   const padding = '='.repeat((4 - value.length % 4) % 4);
   const raw = atob((value + padding).replace(/-/g, '+').replace(/_/g, '/'));
@@ -41,7 +66,7 @@ function RecentActivityRow({ event, person, editable, onEdit, divider }: { event
   return editable ? <button type="button" onClick={onEdit} className={`${className} hover:bg-stone-50 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[#4f7b68]`} aria-label={`Edit ${eventLabel(event)}, logged ${ago(event.startAt)}`}>{content}</button> : <div className={className}>{content}</div>;
 }
 
-export default function Logger({ user, babies, initialSleep, onAdmin, onLogout }: { user: User; babies: Baby[]; initialSleep?: BabyEvent; onAdmin: () => void; onLogout: () => void }) {
+export default function Logger({ user, babies, initialSleep, onAdmin, onLogout, onUserChanged }: { user: User; babies: Baby[]; initialSleep?: BabyEvent; onAdmin: () => void; onLogout: () => void; onUserChanged: (user: User) => void }) {
   const [babyId, setBabyId] = useState(user.defaultBabyId || babies[0]?.id);
   const [events, setEvents] = useState<BabyEvent[]>([]);
   const [people, setPeople] = useState<Record<string, string>>({});
@@ -51,9 +76,10 @@ export default function Logger({ user, babies, initialSleep, onAdmin, onLogout }
   const [notice, setNotice] = useState('');
   const [now, setNow] = useState(() => Date.now());
   const [remindersEnabled, setRemindersEnabled] = useState(false);
+  const [uprightTimerBusy, setUprightTimerBusy] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [editing, setEditing] = useState<BabyEvent>();
-  const [familyInsight, setFamilyInsight] = useState('');
+  const [caregiverInsight, setCaregiverInsight] = useState('');
   const [insightBusy, setInsightBusy] = useState(false);
   const [insightError, setInsightError] = useState('');
   const [pullDistance, setPullDistance] = useState(0);
@@ -61,6 +87,7 @@ export default function Logger({ user, babies, initialSleep, onAdmin, onLogout }
   const pullStart = useRef<number | undefined>(undefined);
   const pullDistanceRef = useRef(0);
   const baby = babies.find((item) => item.id === babyId);
+  const uprightTimerEnabled = user.uprightTimerEnabled === true;
   const recent = useMemo(() => events.slice(0, 8), [events]);
   const latestFeed = useMemo(() => events.find((event) => event.type === 'feed'), [events]);
   const nextFeedAt = latestFeed ? new Date(latestFeed.startAt).getTime() + (baby?.feedingIntervalMinutes || 120) * 60_000 : undefined;
@@ -112,14 +139,25 @@ export default function Logger({ user, babies, initialSleep, onAdmin, onLogout }
     } catch (reason) { setNotice((reason as Error).message); }
   }
 
-  async function loadFamilyInsight() {
+  async function loadCaregiverInsight() {
     if (!babyId) return;
     setInsightBusy(true); setInsightError('');
     try {
       const result = await api.get<{ insight: string }>(`/api/insights/ai?babyId=${babyId}`);
-      setFamilyInsight(result.insight);
+      setCaregiverInsight(result.insight);
     } catch (reason) { setInsightError((reason as Error).message); }
     finally { setInsightBusy(false); }
+  }
+
+  async function toggleUprightTimer() {
+    const enabled = !uprightTimerEnabled;
+    setUprightTimerBusy(true);
+    try {
+      const result = await api.patch<{ user: User }>('/api/me/preferences', { uprightTimerEnabled: enabled });
+      onUserChanged(result.user);
+      setNotice(enabled ? remindersEnabled ? 'Upright timer and completion alert enabled' : 'Upright timer enabled. Tap the bell for a completion alert.' : 'Upright timer turned off');
+    } catch (reason) { setNotice((reason as Error).message); }
+    finally { setUprightTimerBusy(false); }
   }
 
   function startPull(event: React.TouchEvent<HTMLElement>) {
@@ -153,7 +191,7 @@ export default function Logger({ user, babies, initialSleep, onAdmin, onLogout }
       const result = await api.post<{ event: BabyEvent }>('/api/events', payload);
       setEvents((current) => [result.event, ...current.filter((item) => item.id !== result.event.id)]);
       if (result.event.type === 'sleep') setActiveSleep(result.event);
-      setFamilyInsight('');
+      setCaregiverInsight('');
       setNotice(`${label} logged`); navigator.vibrate?.(40);
     } catch {
       await queueEvent(payload); setNotice(`${label} saved offline and will sync`);
@@ -165,13 +203,13 @@ export default function Logger({ user, babies, initialSleep, onAdmin, onLogout }
     setBusy(true);
     try {
       const result = await api.patch<{ event: BabyEvent }>(`/api/events/${activeSleep.id}`, { endAt: new Date().toISOString() });
-      setEvents((current) => current.map((item) => item.id === result.event.id ? result.event : item)); setActiveSleep(undefined); setFamilyInsight(''); setNotice('Wake time logged');
+      setEvents((current) => current.map((item) => item.id === result.event.id ? result.event : item)); setActiveSleep(undefined); setCaregiverInsight(''); setNotice('Wake time logged');
     } catch (reason) { setNotice((reason as Error).message); } finally { setBusy(false); }
   }
 
   async function undo() {
     const latest = events[0]; if (!latest) return;
-    try { await api.delete(`/api/events/${latest.id}`); setEvents((current) => current.slice(1)); if (latest.id === activeSleep?.id) setActiveSleep(undefined); setFamilyInsight(''); setNotice('Last entry undone'); }
+    try { await api.delete(`/api/events/${latest.id}`); setEvents((current) => current.slice(1)); if (latest.id === activeSleep?.id) setActiveSleep(undefined); setCaregiverInsight(''); setNotice('Last entry undone'); }
     catch (reason) { setNotice((reason as Error).message); }
   }
 
@@ -186,8 +224,9 @@ export default function Logger({ user, babies, initialSleep, onAdmin, onLogout }
       <div className="flex items-center justify-between gap-3"><div><p className="text-sm font-bold uppercase tracking-wide opacity-70">Feeding reminder · every {durationLabel((baby?.feedingIntervalMinutes || 120) * 60_000)}</p><p className="mt-1 text-xl font-black">{nextFeedAt ? nextFeedAt <= now ? `Feed due ${durationLabel(now - nextFeedAt)} ago` : `Next feed in ${durationLabel(nextFeedAt - now)}` : 'Log the first feed to start reminders'}</p></div><button onClick={toggleReminders} className={`tap grid min-w-16 place-items-center rounded-2xl ${remindersEnabled ? 'bg-[#4f7b68] text-white' : 'bg-stone-100'}`} aria-label={remindersEnabled ? 'Turn off feed reminders' : 'Enable feed reminders'}>{remindersEnabled ? <Bell /> : <BellOff />}</button></div>
       <p className="mt-2 text-sm font-semibold opacity-70">{remindersEnabled ? 'Alerts are on for this device.' : 'Tap the bell to get an alert when feeding is due.'}</p>
     </section>
-    <section className="card mb-4 rounded-3xl bg-[#f2efe9] p-4" aria-labelledby="family-insight-title"><div className="flex items-start justify-between gap-3"><div><p className="flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-[#725d3c]"><Sparkles size={18} />AI family insight</p><h2 id="family-insight-title" className="mt-1 text-xl font-black">The last 7 days</h2></div><button type="button" onClick={loadFamilyInsight} disabled={insightBusy} className="min-h-12 shrink-0 rounded-xl bg-white px-4 font-black text-[#4f7b68] shadow-sm disabled:opacity-50">{insightBusy ? 'Thinking…' : familyInsight ? 'Refresh' : 'Show insight'}</button></div>{familyInsight ? <p className="mt-3 leading-relaxed text-stone-700">{familyInsight}</p> : <p className="mt-2 text-sm text-stone-600">Tap for a private summary of feeding, diapers, and sleep. It won’t create or change any logs.</p>}{insightError ? <p role="alert" className="mt-2 text-sm font-bold text-red-700">{insightError}</p> : null}<p className="mt-2 text-xs text-stone-500">Descriptive only—not medical advice.</p></section>
-    {babies.length > 1 ? <label className="mb-4 block text-sm font-bold">Logging for<select value={babyId} onChange={(event) => { setBabyId(event.target.value); setFamilyInsight(''); setInsightError(''); }} className="ml-2 h-12 rounded-xl border border-stone-200 bg-white px-3">{babies.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label> : null}
+    <UprightTimerCard latestFeedAt={latestFeed?.startAt} enabled={uprightTimerEnabled} alertsEnabled={remindersEnabled} busy={uprightTimerBusy} onToggle={toggleUprightTimer} />
+    <section className="card mb-4 rounded-3xl bg-[#f2efe9] p-4" aria-labelledby="caregiver-insight-title"><div className="flex items-start justify-between gap-3"><div><p className="flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-[#725d3c]"><Sparkles size={18} />AI caregiver insight</p><h2 id="caregiver-insight-title" className="mt-1 text-xl font-black">The last 7 days</h2></div><button type="button" onClick={loadCaregiverInsight} disabled={insightBusy} className="min-h-12 shrink-0 rounded-xl bg-white px-4 font-black text-[#4f7b68] shadow-sm disabled:opacity-50">{insightBusy ? 'Thinking…' : caregiverInsight ? 'Refresh' : 'Show insight'}</button></div>{caregiverInsight ? <p className="mt-3 leading-relaxed text-stone-700">{caregiverInsight}</p> : <p className="mt-2 text-sm text-stone-600">Tap for a private summary of feeding, diapers, and sleep. It won’t create or change any logs.</p>}{insightError ? <p role="alert" className="mt-2 text-sm font-bold text-red-700">{insightError}</p> : null}<p className="mt-2 text-xs text-stone-500">Descriptive only—not medical advice.</p></section>
+    {babies.length > 1 ? <label className="mb-4 block text-sm font-bold">Logging for<select value={babyId} onChange={(event) => { setBabyId(event.target.value); setCaregiverInsight(''); setInsightError(''); }} className="ml-2 h-12 rounded-xl border border-stone-200 bg-white px-3">{babies.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label> : null}
     {notice ? <div role="status" className="mb-4 flex min-h-14 items-center justify-between rounded-2xl bg-[#e7f2ec] px-4 font-bold text-[#345343]"><span>{notice}</span>{events[0] && Date.now() - new Date(events[0].createdAt).getTime() < 120_000 ? <button onClick={undo} className="min-h-12 px-2 underline">Undo</button> : null}</div> : null}
     <section aria-labelledby="quick-title"><h2 id="quick-title" className="sr-only">Quick log</h2><div className="grid grid-cols-2 gap-3">
       <button disabled={busy} onClick={() => setFeedOpen(true)} className="tap card flex min-h-36 flex-col items-center justify-center rounded-3xl bg-[#fff0d7] p-4 text-xl font-black"><span className="mb-2 grid size-14 place-items-center rounded-2xl bg-[#e69a42] text-white"><Milk /></span>Feed</button>
@@ -195,10 +234,10 @@ export default function Logger({ user, babies, initialSleep, onAdmin, onLogout }
       <button disabled={busy} onClick={() => log({ type: 'diaper', diaper: 'poop' }, 'Poop')} className="tap card flex min-h-36 flex-col items-center justify-center rounded-3xl bg-[#f5e7d3] p-4 text-xl font-black"><span className="mb-2 grid size-14 place-items-center rounded-2xl bg-[#a8794f] text-white"><Sparkles /></span>Poop</button>
       <button disabled={busy} onClick={() => activeSleep ? wake() : log({ type: 'sleep' }, 'Sleep')} className={`tap card flex min-h-36 flex-col items-center justify-center rounded-3xl p-4 text-xl font-black ${activeSleep ? 'bg-[#5d557d] text-white' : 'bg-[#ece9f7]'}`}><span className={`mb-2 grid size-14 place-items-center rounded-2xl text-white ${activeSleep ? 'bg-white/20' : 'bg-[#776c9b]'}`}><BedDouble /></span>{activeSleep ? 'Baby woke up' : 'Start sleep'}{activeSleep ? <span className="mt-1 text-xs font-semibold opacity-80">Started {ago(activeSleep.startAt)}</span> : null}</button>
     </div><button disabled={busy} onClick={() => log({ type: 'diaper', diaper: 'both' }, 'Pee + poop')} className="tap card mt-3 flex w-full items-center justify-center gap-3 rounded-2xl bg-white text-lg font-black"><Droplets className="text-[#58a7d1]" /><span>Pee + Poop</span><Sparkles className="text-[#a8794f]" /></button></section>
-    <section className="mt-7 mb-20"><div className="mb-3"><h2 className="text-xl font-black">Recent activity</h2><p className="text-sm text-stone-500">Tap one of your entries—or its time—to edit or delete it.</p></div><div className="card overflow-hidden rounded-3xl bg-white">{recent.length ? recent.map((event, index) => <RecentActivityRow key={event.id} event={event} person={people[event.createdBy] || 'Family'} editable={user.role === 'admin' || event.createdBy === user.id} onEdit={() => setEditing(event)} divider={Boolean(index)} />) : <p className="p-6 text-center text-stone-500">No activity logged yet.</p>}</div></section>
+    <section className="mt-7 mb-20"><div className="mb-3"><h2 className="text-xl font-black">Recent activity</h2><p className="text-sm text-stone-500">Tap one of your entries—or its time—to edit or delete it.</p></div><div className="card overflow-hidden rounded-3xl bg-white">{recent.length ? recent.map((event, index) => <RecentActivityRow key={event.id} event={event} person={people[event.createdBy] || 'Caregiver'} editable={user.role === 'admin' || event.createdBy === user.id} onEdit={() => setEditing(event)} divider={Boolean(index)} />) : <p className="p-6 text-center text-stone-500">No activity logged yet.</p>}</div></section>
     {!chatOpen && !editing && !feedOpen ? <button type="button" onClick={() => setChatOpen(true)} className="fixed right-4 z-30 grid size-16 place-items-center rounded-full bg-[#322b26] text-white shadow-xl transition-transform active:scale-95" style={{ bottom: 'max(1rem, env(safe-area-inset-bottom))' }} aria-label="Tell Leo Logger"><MessageCircle size={30} aria-hidden="true" /></button> : null}
     {feedOpen ? <FeedSheet busy={busy} onClose={() => setFeedOpen(false)} onSave={(feed) => log({ type: 'feed', feed }, `${feed.ounces} oz feed`)} /> : null}
-    {chatOpen && baby ? <Suspense fallback={null}><ChatLogger baby={baby} onClose={() => setChatOpen(false)} onLogged={() => { refresh(); setFamilyInsight(''); setNotice('Activity logged from chat'); }} /></Suspense> : null}
-    {editing ? <Suspense fallback={null}><EventEditSheet event={editing} onClose={() => setEditing(undefined)} onUpdated={(updated) => { setEvents((current) => current.map((item) => item.id === updated.id ? updated : item).sort((a, b) => b.startAt.localeCompare(a.startAt))); if (updated.type === 'sleep') setActiveSleep(updated.endAt ? undefined : updated); setEditing(undefined); setFamilyInsight(''); setNotice('Activity updated'); }} onDeleted={(deleted) => { setEvents((current) => current.filter((item) => item.id !== deleted.id)); if (deleted.id === activeSleep?.id) setActiveSleep(undefined); setEditing(undefined); setFamilyInsight(''); setNotice('Activity deleted'); }} /></Suspense> : null}
+    {chatOpen && baby ? <Suspense fallback={null}><ChatLogger baby={baby} onClose={() => setChatOpen(false)} onLogged={() => { refresh(); setCaregiverInsight(''); setNotice('Activity logged from chat'); }} /></Suspense> : null}
+    {editing ? <Suspense fallback={null}><EventEditSheet event={editing} onClose={() => setEditing(undefined)} onUpdated={(updated) => { setEvents((current) => current.map((item) => item.id === updated.id ? updated : item).sort((a, b) => b.startAt.localeCompare(a.startAt))); if (updated.type === 'sleep') setActiveSleep(updated.endAt ? undefined : updated); setEditing(undefined); setCaregiverInsight(''); setNotice('Activity updated'); }} onDeleted={(deleted) => { setEvents((current) => current.filter((item) => item.id !== deleted.id)); if (deleted.id === activeSleep?.id) setActiveSleep(undefined); setEditing(undefined); setCaregiverInsight(''); setNotice('Activity deleted'); }} /></Suspense> : null}
   </main>;
 }

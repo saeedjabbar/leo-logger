@@ -191,6 +191,14 @@ app.get('/api/me', requireUser, async (request, response) => {
   response.json({ user: publicUser(user), babies: allowed, activeSleep });
 });
 
+app.patch('/api/me/preferences', requireUser, async (request, response) => {
+  const parsed = z.object({ uprightTimerEnabled: z.boolean() }).safeParse(request.body);
+  if (!parsed.success) return response.status(400).json({ error: 'Invalid caregiver preference' });
+  const user = { ...request.currentUser!, ...parsed.data };
+  await store.put('users', user.id, user);
+  response.json({ user: publicUser(user) });
+});
+
 app.get('/api/reminders/config', requireUser, (_request, response) => {
   response.json({ configured: remindersConfigured(), publicKey: process.env.VAPID_PUBLIC_KEY || null });
 });
@@ -338,11 +346,11 @@ app.get('/api/insights/ai', requireUser, async (request, response) => {
   let insight: string;
   let provider: 'azure-openai' | 'built-in' = 'azure-openai';
   try {
-    const result = await interpretWithAzure(`Give the family a warm, factual summary of the last ${days} days in at most 3 short sentences. Mention useful feeding, diaper, or sleep patterns only when supported by the data. Do not log an activity and do not give medical advice.`, baby, events);
+    const result = await interpretWithAzure(`Give the caregivers a warm, factual summary of the last ${days} days in at most 3 short sentences. Mention useful feeding, diaper, or sleep patterns only when supported by the data. Do not log an activity and do not give medical advice.`, baby, events);
     insight = result.reply;
   } catch (error) {
     provider = 'built-in';
-    console.error(JSON.stringify({ level: 'warn', message: `AI family insight unavailable: ${(error as Error).message}` }));
+    console.error(JSON.stringify({ level: 'warn', message: `AI caregiver insight unavailable: ${(error as Error).message}` }));
     const now = new Date();
     const stats = calculateInsights(events, baby.id, new Date(now.getTime() - days * 86_400_000), now, baby.timezone);
     insight = `Over the last ${days} days: ${stats.totals.feeds} feeds totaling ${stats.totals.ounces} oz, ${stats.totals.wet} wet diapers, ${stats.totals.dirty} dirty diapers, and ${stats.totals.sleepHours} hours of logged sleep.`;

@@ -26,7 +26,8 @@ export interface PushSubscriptionRecord {
 export interface ReminderState {
   id: string;
   babyId: string;
-  feedMarker: string;
+  feedMarker?: string;
+  uprightMarker?: string;
   notifiedAt: string;
 }
 
@@ -39,6 +40,7 @@ export interface User {
   pinHash?: string;
   allowedBabyIds: string[];
   defaultBabyId?: string;
+  uprightTimerEnabled?: boolean;
   mustChangePassword?: boolean;
   active: boolean;
   createdAt: string;

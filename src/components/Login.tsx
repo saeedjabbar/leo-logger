@@ -42,7 +42,7 @@ export default function Login({ onLogin }: { onLogin: (user: User) => void }) {
     </div>
     <div className="card rounded-3xl bg-white p-5">
       <div className="mb-5 grid grid-cols-2 rounded-2xl bg-stone-100 p-1" role="tablist">
-        <button className={`tap rounded-xl font-bold ${mode === 'caregiver' ? 'bg-white shadow-sm' : ''}`} onClick={() => setMode('caregiver')}>Family PIN</button>
+        <button className={`tap rounded-xl font-bold ${mode === 'caregiver' ? 'bg-white shadow-sm' : ''}`} onClick={() => setMode('caregiver')}>Caregiver PIN</button>
         <button className={`tap rounded-xl font-bold ${mode === 'admin' ? 'bg-white shadow-sm' : ''}`} onClick={() => setMode('admin')}>Parent admin</button>
       </div>
       {mode === 'caregiver' ? <form onSubmit={submitPin}>

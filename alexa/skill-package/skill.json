@@ -3,7 +3,7 @@
     "publishingInformation": {
       "locales": {
         "en-US": {
-          "summary": "Log baby care events for your private family tracker.",
+          "summary": "Log baby care events for your private caregiver tracker.",
           "examplePhrases": [
             "Alexa, ask Leo Logger to log a pee",
             "Alexa, ask Leo Logger to log a two ounce feed",
@@ -11,11 +11,11 @@
           ],
           "keywords": ["baby", "feeding", "diaper", "sleep"],
           "name": "Leo Logger",
-          "description": "Private family skill for logging feeds, diapers, and sleep."
+          "description": "Private caregiver skill for logging feeds, diapers, and sleep."
         }
       },
       "isAvailableWorldwide": false,
-      "testingInstructions": "Private family skill. Use the provided sample utterances.",
+      "testingInstructions": "Private caregiver skill. Use the provided sample utterances.",
       "category": "CHILDRENS_EDUCATION_AND_REFERENCE",
       "distributionCountries": ["US"]
     },

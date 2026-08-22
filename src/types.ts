@@ -1,5 +1,5 @@
 export type Role = 'admin' | 'caregiver';
-export interface User { id: string; role: Role; displayName: string; email?: string; allowedBabyIds: string[]; defaultBabyId?: string; mustChangePassword?: boolean; active: boolean }
+export interface User { id: string; role: Role; displayName: string; email?: string; allowedBabyIds: string[]; defaultBabyId?: string; uprightTimerEnabled?: boolean; mustChangePassword?: boolean; active: boolean }
 export interface Baby { id: string; name: string; birthDate?: string; timezone: string; feedingIntervalMinutes: number; active: boolean }
 export interface BabyEvent {
   id: string; babyId: string; type: 'feed' | 'diaper' | 'sleep' | 'legacy_pump'; startAt: string; endAt?: string;
