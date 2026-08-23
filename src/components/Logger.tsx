@@ -65,7 +65,8 @@ export default function Logger({ user, babies, initialSleep, aiEnabled, onAdmin,
   const nextFeedAt = latestFeed ? new Date(latestFeed.startAt).getTime() + (baby?.feedingIntervalMinutes || 120) * 60_000 : undefined;
   const latestFeedAt = latestFeed ? new Date(latestFeed.startAt).getTime() : undefined;
   const uprightDueAt = latestFeedAt === undefined ? undefined : latestFeedAt + 15 * 60_000;
-  const uprightFeedIsRecent = latestFeedAt !== undefined && now - latestFeedAt < 60 * 60_000;
+  const uprightCountdownActive = user.uprightTimerEnabled === true && uprightDueAt !== undefined && uprightDueAt > now;
+  const showUprightTimer = user.uprightTimerEnabled === true && (uprightDueAt === undefined || uprightCountdownActive);
 
   const refresh = useCallback(async () => {
     if (!babyId) return;
@@ -106,11 +107,11 @@ export default function Logger({ user, babies, initialSleep, aiEnabled, onAdmin,
     return () => { cancelled = true; window.removeEventListener('focus', sync); };
   }, []);
   useEffect(() => {
-    if (!remindersEnabled && !user.uprightTimerEnabled) return;
+    if (!remindersEnabled && !uprightCountdownActive) return;
     setNow(Date.now());
     const timer = window.setInterval(() => setNow(Date.now()), 1_000);
     return () => window.clearInterval(timer);
-  }, [remindersEnabled, user.uprightTimerEnabled]);
+  }, [remindersEnabled, uprightCountdownActive]);
   useEffect(() => {
     if (!user.uprightTimerEnabled || !babyId) return;
     const latestFeed = events.find((event) => event.type === 'feed');
@@ -203,7 +204,7 @@ export default function Logger({ user, babies, initialSleep, aiEnabled, onAdmin,
     </header>
     {user.mustChangePassword ? <button onClick={onAdmin} className="mb-4 w-full rounded-2xl bg-amber-100 p-4 text-left font-bold text-amber-900">Temporary password in use. Open Admin Settings to change it now.</button> : null}
     {remindersEnabled ? <section className={`card mb-4 rounded-3xl p-4 ${nextFeedAt && nextFeedAt <= now ? 'bg-red-50 text-red-900' : 'bg-white'}`} aria-label="Feeding reminder"><p className="flex items-center gap-2 text-sm font-bold uppercase tracking-wide opacity-70"><Bell size={18} />Feeding reminder · every {durationLabel((baby?.feedingIntervalMinutes || 120) * 60_000)}</p><p className="mt-1 text-2xl font-black tabular-nums">{nextFeedAt ? nextFeedAt > now ? `Next feed in ${feedCountdownLabel(nextFeedAt - now)}` : now - nextFeedAt < 1_000 ? 'Feed due now' : `Feed overdue by ${feedCountdownLabel(now - nextFeedAt)}` : 'Log the first feed to start the reminder'}</p><p className="mt-2 text-sm font-semibold opacity-70">Alerts are on for this device.{user.role === 'admin' ? ' Manage them under Settings.' : ''}</p></section> : null}
-    {user.uprightTimerEnabled ? <section className={`card mb-4 rounded-3xl p-4 ${uprightFeedIsRecent && uprightDueAt !== undefined && uprightDueAt > now ? 'bg-[#e9f3ee]' : 'bg-white'}`} aria-label="15-minute upright timer"><p className="flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-[#4f7b68]"><Timer size={18} />15-minute upright timer</p><p className="mt-1 text-2xl font-black tabular-nums">{!uprightFeedIsRecent || uprightDueAt === undefined ? 'Starts after the next feed' : uprightDueAt > now ? `Hold upright for ${feedCountdownLabel(uprightDueAt - now)}` : 'Upright time complete'}</p><p className="mt-2 text-sm font-semibold text-stone-600">Starts automatically after each feed.</p></section> : null}
+    {showUprightTimer ? <section className={`card mb-4 rounded-3xl p-4 ${uprightCountdownActive ? 'bg-[#e9f3ee]' : 'bg-white'}`} aria-label="15-minute upright timer"><p className="flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-[#4f7b68]"><Timer size={18} />15-minute upright timer</p><p className="mt-1 text-2xl font-black tabular-nums">{uprightDueAt === undefined ? 'Starts after the next feed' : `Hold upright for ${feedCountdownLabel(uprightDueAt - now)}`}</p><p className="mt-2 text-sm font-semibold text-stone-600">Starts automatically after each feed and disappears when complete.</p></section> : null}
     {aiEnabled ? <section className="card mb-4 rounded-3xl bg-[#f2efe9] p-4" aria-labelledby="caregiver-insight-title"><div className="flex items-start justify-between gap-3"><div><p className="flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-[#725d3c]"><Sparkles size={18} />AI caregiver insight</p><h2 id="caregiver-insight-title" className="mt-1 text-xl font-black">The last 7 days</h2></div><button type="button" onClick={loadCaregiverInsight} disabled={insightBusy} className="min-h-12 shrink-0 rounded-xl bg-white px-4 font-black text-[#4f7b68] shadow-sm disabled:opacity-50">{insightBusy ? 'Thinking…' : caregiverInsight ? 'Refresh' : 'Show insight'}</button></div>{caregiverInsight ? <p className="mt-3 leading-relaxed text-stone-700">{caregiverInsight}</p> : <p className="mt-2 text-sm text-stone-600">Tap for a private summary of feeding, diapers, and sleep. It won’t create or change any logs.</p>}{insightError ? <p role="alert" className="mt-2 text-sm font-bold text-red-700">{insightError}</p> : null}<p className="mt-2 text-xs text-stone-500">Descriptive only—not medical advice. AI can make mistakes.</p></section> : null}
     {babies.length > 1 ? <label className="mb-4 block text-sm font-bold">Logging for<select value={babyId} onChange={(event) => { setBabyId(event.target.value); setCaregiverInsight(''); setInsightError(''); }} className="ml-2 h-12 rounded-xl border border-stone-200 bg-white px-3">{babies.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label> : null}
     {notice ? <div role="status" className="mb-4 flex min-h-14 items-center justify-between rounded-2xl bg-[#e7f2ec] px-4 font-bold text-[#345343]"><span>{notice}</span>{events[0] && Date.now() - new Date(events[0].createdAt).getTime() < 120_000 ? <button onClick={undo} className="min-h-12 px-2 underline">Undo</button> : null}</div> : null}
