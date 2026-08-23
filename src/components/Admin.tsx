@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import { startRegistration } from '@simplewebauthn/browser';
-import { ArrowLeft, Baby as BabyIcon, BarChart3, Bell, BellOff, Download, FileUp, KeyRound, Plus, RefreshCw, Trash2, Users } from 'lucide-react';
+import { ArrowLeft, Baby as BabyIcon, BarChart3, Bell, BellOff, CalendarClock, Download, FileUp, KeyRound, Plus, RefreshCw, Trash2, Users } from 'lucide-react';
 import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { api } from '../api';
 import type { Baby, BabyEvent, Insights, User } from '../types';
 
-type Tab = 'overview' | 'caregivers' | 'babies_schedules' | 'settings' | 'history';
+type Tab = 'overview' | 'caregivers' | 'babies' | 'schedules' | 'settings' | 'history';
 const number = (value: number, digits = 1) => value.toFixed(digits).replace(/\.0$/, '');
 
 function applicationServerKey(value: string) {
@@ -55,11 +55,12 @@ export default function Admin({ currentUser, initialBabies, onBack, onChanged }:
 
   return <main className="safe-top safe-bottom mx-auto min-h-dvh max-w-6xl px-4">
     <header className="flex flex-wrap items-center justify-between gap-3"><div className="flex items-center gap-3"><button onClick={onBack} className="grid size-12 place-items-center rounded-full bg-white shadow-sm" aria-label="Back to logger"><ArrowLeft /></button><div><p className="text-sm font-bold uppercase tracking-wider text-[#4f7b68]">Admin</p><h1 className="text-3xl font-black">Caregiver dashboard</h1></div></div><div className="flex gap-2"><select value={babyId} onChange={(event) => setBabyId(event.target.value)} className="h-12 rounded-xl border bg-white px-3 font-bold">{babies.map((baby) => <option value={baby.id} key={baby.id}>{baby.name}</option>)}</select><button onClick={load} className="grid size-12 place-items-center rounded-xl bg-white shadow-sm" aria-label="Refresh"><RefreshCw /></button></div></header>
-    <nav className="my-5 flex gap-2 overflow-x-auto pb-1" aria-label="Admin sections">{([['overview', 'Insights', BarChart3], ['caregivers', 'Caregivers', Users], ['babies_schedules', 'Babies & schedules', BabyIcon], ['settings', 'Settings', KeyRound], ['history', 'Event history', FileUp]] as const).map(([value, label, Icon]) => <button key={value} onClick={() => setTab(value)} className={`tap flex min-w-max items-center gap-2 rounded-2xl px-5 font-black ${tab === value ? 'bg-[#4f7b68] text-white' : 'bg-white'}`}><Icon size={20} />{label}</button>)}</nav>
+    <nav className="my-5 flex gap-2 overflow-x-auto pb-1" aria-label="Admin sections">{([['overview', 'Insights', BarChart3], ['caregivers', 'Caregivers', Users], ['babies', 'Babies', BabyIcon], ['schedules', 'Schedules', CalendarClock], ['settings', 'Settings', KeyRound], ['history', 'Event history', FileUp]] as const).map(([value, label, Icon]) => <button key={value} onClick={() => setTab(value)} className={`tap flex min-w-max items-center gap-2 rounded-2xl px-5 font-black ${tab === value ? 'bg-[#4f7b68] text-white' : 'bg-white'}`}><Icon size={20} />{label}</button>)}</nav>
     {message ? <p role="status" className="mb-4 rounded-2xl bg-amber-50 p-4 font-bold">{message}</p> : null}
     {tab === 'overview' ? <Overview key={`${babyId}:${range}`} insights={insights} range={range} setRange={setRange} babyId={babyId} /> : null}
     {tab === 'caregivers' ? <Caregivers users={users} babies={babies} onChanged={() => { load(); onChanged(); }} setMessage={setMessage} /> : null}
-    {tab === 'babies_schedules' ? <div className="space-y-8"><Babies babies={babies} setMessage={setMessage} onChanged={() => { load(); onChanged(); }} onRemoved={(removedId) => { setBabies((current) => current.filter((baby) => baby.id !== removedId)); setBabyId((current) => current === removedId ? babies.find((baby) => baby.id !== removedId)?.id ?? '' : current); onChanged(); }} /><Schedules currentUser={currentUser} babies={babies} setMessage={setMessage} onChanged={() => { load(); onChanged(); }} /></div> : null}
+    {tab === 'babies' ? <Babies babies={babies} setMessage={setMessage} onChanged={() => { load(); onChanged(); }} onRemoved={(removedId) => { setBabies((current) => current.filter((baby) => baby.id !== removedId)); setBabyId((current) => current === removedId ? babies.find((baby) => baby.id !== removedId)?.id ?? '' : current); onChanged(); }} /> : null}
+    {tab === 'schedules' ? <Schedules currentUser={currentUser} babies={babies} setMessage={setMessage} onChanged={() => { load(); onChanged(); }} /> : null}
     {tab === 'settings' ? <Settings setMessage={setMessage} onChanged={onChanged} /> : null}
     {tab === 'history' ? <History events={events} people={people} onEdit={editEvent} onDelete={removeEvent} babyId={babyId} onImported={(text) => { setMessage(text); load(); }} /> : null}
   </main>;
