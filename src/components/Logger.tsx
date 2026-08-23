@@ -3,6 +3,7 @@ import { Baby as BabyIcon, BedDouble, Droplets, MessageCircle, Milk, Pencil, Ref
 import { api } from '../api';
 import { flushEvents, queueEvent } from '../offline';
 import type { Baby, BabyEvent, User } from '../types';
+import { uprightReminderDelay } from '../uprightReminder';
 import FeedSheet from './FeedSheet';
 
 const ChatLogger = lazy(() => import('./ChatLogger'));
@@ -47,6 +48,7 @@ export default function Logger({ user, babies, initialSleep, aiEnabled, onAdmin,
   const [refreshing, setRefreshing] = useState(false);
   const pullStart = useRef<number | undefined>(undefined);
   const pullDistanceRef = useRef(0);
+  const uprightAlerted = useRef(new Set<string>());
   const baby = babies.find((item) => item.id === babyId);
   const recent = useMemo(() => events.slice(0, 8), [events]);
 
@@ -77,6 +79,27 @@ export default function Logger({ user, babies, initialSleep, aiEnabled, onAdmin,
     const sync = () => flushEvents(async (event) => { await api.post('/api/events', event); }).then((count) => { if (count) { setNotice(`${count} offline ${count === 1 ? 'entry' : 'entries'} synced`); refresh(); } }).catch(() => undefined);
     window.addEventListener('online', sync); sync(); return () => window.removeEventListener('online', sync);
   }, [babyId, refresh]);
+  useEffect(() => {
+    if (!user.uprightTimerEnabled || !babyId) return;
+    const latestFeed = events.find((event) => event.type === 'feed');
+    if (!latestFeed) return;
+    const marker = `${latestFeed.id}:${latestFeed.startAt}`;
+    const storageKey = `leo-logger:upright-alert:v1:${user.id}:${babyId}`;
+    let alreadyAlerted = uprightAlerted.current.has(marker);
+    try { alreadyAlerted ||= localStorage.getItem(storageKey) === marker; } catch { /* In-memory tracking still prevents repeats. */ }
+    if (alreadyAlerted) return;
+    const notify = () => {
+      uprightAlerted.current.add(marker);
+      try { localStorage.setItem(storageKey, marker); } catch { /* Storage can be unavailable in private browsing. */ }
+      setNotice(`${baby?.name || 'Baby'}'s 15-minute upright time is complete`);
+      navigator.vibrate?.([100, 80, 100]);
+    };
+    const delay = uprightReminderDelay(latestFeed.startAt);
+    if (delay === undefined) return;
+    if (delay === 0) { notify(); return; }
+    const timer = window.setTimeout(notify, delay);
+    return () => window.clearTimeout(timer);
+  }, [baby?.name, babyId, events, user.id, user.uprightTimerEnabled]);
   async function loadCaregiverInsight() {
     if (!babyId) return;
     setInsightBusy(true); setInsightError('');
@@ -147,7 +170,7 @@ export default function Logger({ user, babies, initialSleep, aiEnabled, onAdmin,
       <div className="flex gap-2">{user.role === 'admin' ? <button onClick={onAdmin} className="grid size-12 place-items-center rounded-full bg-white shadow-sm" aria-label="Open admin dashboard"><Settings /></button> : null}<button onClick={onLogout} className="rounded-full bg-stone-100 px-4 font-bold">Sign out</button></div>
     </header>
     {user.mustChangePassword ? <button onClick={onAdmin} className="mb-4 w-full rounded-2xl bg-amber-100 p-4 text-left font-bold text-amber-900">Temporary password in use. Open Admin Settings to change it now.</button> : null}
-    {aiEnabled ? <section className="card mb-4 rounded-3xl bg-[#f2efe9] p-4" aria-labelledby="caregiver-insight-title"><div className="flex items-start justify-between gap-3"><div><p className="flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-[#725d3c]"><Sparkles size={18} />AI caregiver insight</p><h2 id="caregiver-insight-title" className="mt-1 text-xl font-black">The last 7 days</h2></div><button type="button" onClick={loadCaregiverInsight} disabled={insightBusy} className="min-h-12 shrink-0 rounded-xl bg-white px-4 font-black text-[#4f7b68] shadow-sm disabled:opacity-50">{insightBusy ? 'Thinking…' : caregiverInsight ? 'Refresh' : 'Show insight'}</button></div>{caregiverInsight ? <p className="mt-3 leading-relaxed text-stone-700">{caregiverInsight}</p> : <p className="mt-2 text-sm text-stone-600">Tap for a private summary of feeding, diapers, and sleep. It won’t create or change any logs.</p>}{insightError ? <p role="alert" className="mt-2 text-sm font-bold text-red-700">{insightError}</p> : null}<p className="mt-2 text-xs text-stone-500">Descriptive only—not medical advice.</p></section> : null}
+    {aiEnabled ? <section className="card mb-4 rounded-3xl bg-[#f2efe9] p-4" aria-labelledby="caregiver-insight-title"><div className="flex items-start justify-between gap-3"><div><p className="flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-[#725d3c]"><Sparkles size={18} />AI caregiver insight</p><h2 id="caregiver-insight-title" className="mt-1 text-xl font-black">The last 7 days</h2></div><button type="button" onClick={loadCaregiverInsight} disabled={insightBusy} className="min-h-12 shrink-0 rounded-xl bg-white px-4 font-black text-[#4f7b68] shadow-sm disabled:opacity-50">{insightBusy ? 'Thinking…' : caregiverInsight ? 'Refresh' : 'Show insight'}</button></div>{caregiverInsight ? <p className="mt-3 leading-relaxed text-stone-700">{caregiverInsight}</p> : <p className="mt-2 text-sm text-stone-600">Tap for a private summary of feeding, diapers, and sleep. It won’t create or change any logs.</p>}{insightError ? <p role="alert" className="mt-2 text-sm font-bold text-red-700">{insightError}</p> : null}<p className="mt-2 text-xs text-stone-500">Descriptive only—not medical advice. AI can make mistakes.</p></section> : null}
     {babies.length > 1 ? <label className="mb-4 block text-sm font-bold">Logging for<select value={babyId} onChange={(event) => { setBabyId(event.target.value); setCaregiverInsight(''); setInsightError(''); }} className="ml-2 h-12 rounded-xl border border-stone-200 bg-white px-3">{babies.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label> : null}
     {notice ? <div role="status" className="mb-4 flex min-h-14 items-center justify-between rounded-2xl bg-[#e7f2ec] px-4 font-bold text-[#345343]"><span>{notice}</span>{events[0] && Date.now() - new Date(events[0].createdAt).getTime() < 120_000 ? <button onClick={undo} className="min-h-12 px-2 underline">Undo</button> : null}</div> : null}
     <section aria-labelledby="quick-title"><h2 id="quick-title" className="sr-only">Quick log</h2><div className="grid grid-cols-2 gap-3">
