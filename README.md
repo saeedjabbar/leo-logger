@@ -8,7 +8,7 @@ A privacy-minded, mobile-first PWA for logging baby feeds, diapers, and sleep. I
 - Chat history is private to each caregiver and baby, persists between sessions, and can be cleared without deleting activity logs.
 - Admin → Settings includes a household-wide AI privacy switch; one-tap and simple rule-based text logging continue to work when AI is off.
 - Admin → Babies manages baby profiles and safely removes babies while preserving historical activity.
-- Admin → Schedules contains feeding intervals, per-device alerts, and the optional 15-minute upright reminder.
+- Admin → Schedules contains feeding intervals and the optional 15-minute upright reminder; per-device alerts are under Admin → Settings.
 - Admins can tap the baby name on Home to edit the baby’s name, birth date, and timezone.
 - Tap a recent activity or its relative time to correct the exact time and details; caregiver edits are limited to entries they logged.
 - Caregiver devices live-update through a private event stream, with focus and periodic refresh fallbacks for suspended mobile PWAs.
@@ -59,7 +59,7 @@ The script provisions a GRS Storage account, ACR, Container Apps environment, ma
 
 Only models sold and billed directly by Azure should be configured. Microsoft states those models are eligible for startup credits, while partner, community, and Azure Marketplace models are not. This project does not integrate Anthropic, partner catalogs, Marketplace offers, or user-supplied API keys.
 
-Each baby has a configurable feeding interval under Admin → Schedules. Enable background alerts there on each device; the upright timer also shows a reminder while the app is open. On iPhone, install the PWA with Safari → Share → Add to Home Screen before enabling notifications.
+Each baby has a configurable feeding interval under Admin → Schedules. Enable background alerts under Admin → Settings on each device; the upright timer also shows a reminder while the app is open. On iPhone, install the PWA with Safari → Share → Add to Home Screen before enabling notifications.
 
 After admins change their temporary password, rotate or remove the bootstrap secret in Azure. Add Alexa using [alexa/README.md](alexa/README.md).
 

@@ -1,5 +1,5 @@
-const CACHE = 'leo-shell-v1';
-const SHELL = ['/', '/manifest.webmanifest', '/icon.svg', '/icon-192.png'];
+const CACHE = 'leo-shell-v2';
+const SHELL = ['/', '/manifest.webmanifest', '/icon.svg', '/icon-baby-192.png'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(SHELL)));
@@ -31,8 +31,8 @@ self.addEventListener('push', (event) => {
   const message = event.data?.json() || {};
   event.waitUntil(self.registration.showNotification(message.title || 'Feeding reminder', {
     body: message.body || 'The next feeding is due.',
-    icon: '/icon-192.png',
-    badge: '/icon-192.png',
+    icon: '/icon-baby-192.png',
+    badge: '/icon-baby-192.png',
     tag: message.tag || 'feed-due',
     renotify: true,
     data: { url: message.url || '/' },

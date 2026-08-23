@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Baby as BabyIcon, BedDouble, Droplets, MessageCircle, Milk, Pencil, RefreshCw, Settings, Sparkles } from 'lucide-react';
+import { Baby as BabyIcon, BedDouble, Bell, Droplets, MessageCircle, Milk, Pencil, RefreshCw, Settings, Sparkles } from 'lucide-react';
 import { api } from '../api';
 import { flushEvents, queueEvent } from '../offline';
 import type { Baby, BabyEvent, User } from '../types';
@@ -24,6 +24,13 @@ function ago(value: string) {
   const hours = Math.floor(minutes / 60); return `${hours}h ${minutes % 60}m ago`;
 }
 
+function durationLabel(milliseconds: number) {
+  const minutes = Math.max(0, Math.round(Math.abs(milliseconds) / 60_000));
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours} hr${hours === 1 ? '' : 's'}${minutes % 60 ? ` ${minutes % 60} min` : ''}`;
+}
+
 function RecentActivityRow({ event, person, editable, onEdit, divider }: { event: BabyEvent; person: string; editable: boolean; onEdit: () => void; divider: boolean }) {
   const content = <><div className="text-left"><p className="font-black capitalize">{eventLabel(event)}</p><p className="text-sm text-stone-500">{person}</p></div><span className={`flex shrink-0 items-center gap-2 rounded-xl px-2 py-2 text-sm font-bold ${editable ? 'bg-stone-100 text-[#345343]' : 'text-stone-500'}`}><time className="whitespace-nowrap">{ago(event.startAt)}</time>{editable ? <Pencil size={16} aria-hidden="true" /> : null}</span></>;
   const className = `flex min-h-18 w-full items-center justify-between gap-3 p-4 ${divider ? 'border-t border-stone-100' : ''}`;
@@ -38,6 +45,8 @@ export default function Logger({ user, babies, initialSleep, aiEnabled, onAdmin,
   const [feedOpen, setFeedOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
+  const [remindersEnabled, setRemindersEnabled] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
   const [chatOpen, setChatOpen] = useState(false);
   const [editing, setEditing] = useState<BabyEvent>();
   const [profileOpen, setProfileOpen] = useState(false);
@@ -51,6 +60,8 @@ export default function Logger({ user, babies, initialSleep, aiEnabled, onAdmin,
   const uprightAlerted = useRef(new Set<string>());
   const baby = babies.find((item) => item.id === babyId);
   const recent = useMemo(() => events.slice(0, 8), [events]);
+  const latestFeed = useMemo(() => events.find((event) => event.type === 'feed'), [events]);
+  const nextFeedAt = latestFeed ? new Date(latestFeed.startAt).getTime() + (baby?.feedingIntervalMinutes || 120) * 60_000 : undefined;
 
   const refresh = useCallback(async () => {
     if (!babyId) return;
@@ -79,6 +90,23 @@ export default function Logger({ user, babies, initialSleep, aiEnabled, onAdmin,
     const sync = () => flushEvents(async (event) => { await api.post('/api/events', event); }).then((count) => { if (count) { setNotice(`${count} offline ${count === 1 ? 'entry' : 'entries'} synced`); refresh(); } }).catch(() => undefined);
     window.addEventListener('online', sync); sync(); return () => window.removeEventListener('online', sync);
   }, [babyId, refresh]);
+  useEffect(() => {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+    let cancelled = false;
+    const sync = () => navigator.serviceWorker.ready
+      .then((registration) => registration.pushManager.getSubscription())
+      .then((subscription) => { if (!cancelled) setRemindersEnabled(Boolean(subscription)); })
+      .catch(() => { if (!cancelled) setRemindersEnabled(false); });
+    sync();
+    window.addEventListener('focus', sync);
+    return () => { cancelled = true; window.removeEventListener('focus', sync); };
+  }, []);
+  useEffect(() => {
+    if (!remindersEnabled) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, [remindersEnabled]);
   useEffect(() => {
     if (!user.uprightTimerEnabled || !babyId) return;
     const latestFeed = events.find((event) => event.type === 'feed');
@@ -170,6 +198,7 @@ export default function Logger({ user, babies, initialSleep, aiEnabled, onAdmin,
       <div className="flex gap-2">{user.role === 'admin' ? <button onClick={onAdmin} className="grid size-12 place-items-center rounded-full bg-white shadow-sm" aria-label="Open admin dashboard"><Settings /></button> : null}<button onClick={onLogout} className="rounded-full bg-stone-100 px-4 font-bold">Sign out</button></div>
     </header>
     {user.mustChangePassword ? <button onClick={onAdmin} className="mb-4 w-full rounded-2xl bg-amber-100 p-4 text-left font-bold text-amber-900">Temporary password in use. Open Admin Settings to change it now.</button> : null}
+    {remindersEnabled ? <section className={`card mb-4 rounded-3xl p-4 ${nextFeedAt && nextFeedAt <= now ? 'bg-red-50 text-red-900' : 'bg-white'}`} aria-label="Feeding reminder"><p className="flex items-center gap-2 text-sm font-bold uppercase tracking-wide opacity-70"><Bell size={18} />Feeding reminder · every {durationLabel((baby?.feedingIntervalMinutes || 120) * 60_000)}</p><p className="mt-1 text-xl font-black">{nextFeedAt ? nextFeedAt <= now ? `Feed due ${durationLabel(now - nextFeedAt)} ago` : `Next feed in ${durationLabel(nextFeedAt - now)}` : 'Log the first feed to start the reminder'}</p><p className="mt-2 text-sm font-semibold opacity-70">Alerts are on for this device.{user.role === 'admin' ? ' Manage them under Schedules.' : ''}</p></section> : null}
     {aiEnabled ? <section className="card mb-4 rounded-3xl bg-[#f2efe9] p-4" aria-labelledby="caregiver-insight-title"><div className="flex items-start justify-between gap-3"><div><p className="flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-[#725d3c]"><Sparkles size={18} />AI caregiver insight</p><h2 id="caregiver-insight-title" className="mt-1 text-xl font-black">The last 7 days</h2></div><button type="button" onClick={loadCaregiverInsight} disabled={insightBusy} className="min-h-12 shrink-0 rounded-xl bg-white px-4 font-black text-[#4f7b68] shadow-sm disabled:opacity-50">{insightBusy ? 'Thinking…' : caregiverInsight ? 'Refresh' : 'Show insight'}</button></div>{caregiverInsight ? <p className="mt-3 leading-relaxed text-stone-700">{caregiverInsight}</p> : <p className="mt-2 text-sm text-stone-600">Tap for a private summary of feeding, diapers, and sleep. It won’t create or change any logs.</p>}{insightError ? <p role="alert" className="mt-2 text-sm font-bold text-red-700">{insightError}</p> : null}<p className="mt-2 text-xs text-stone-500">Descriptive only—not medical advice. AI can make mistakes.</p></section> : null}
     {babies.length > 1 ? <label className="mb-4 block text-sm font-bold">Logging for<select value={babyId} onChange={(event) => { setBabyId(event.target.value); setCaregiverInsight(''); setInsightError(''); }} className="ml-2 h-12 rounded-xl border border-stone-200 bg-white px-3">{babies.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label> : null}
     {notice ? <div role="status" className="mb-4 flex min-h-14 items-center justify-between rounded-2xl bg-[#e7f2ec] px-4 font-bold text-[#345343]"><span>{notice}</span>{events[0] && Date.now() - new Date(events[0].createdAt).getTime() < 120_000 ? <button onClick={undo} className="min-h-12 px-2 underline">Undo</button> : null}</div> : null}
