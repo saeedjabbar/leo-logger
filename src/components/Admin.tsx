@@ -1,18 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import { startRegistration } from '@simplewebauthn/browser';
-import { ArrowLeft, Baby as BabyIcon, BarChart3, Bell, BellOff, CalendarClock, Download, FileUp, KeyRound, Plus, RefreshCw, Trash2, Users } from 'lucide-react';
+import { ArrowLeft, Baby as BabyIcon, BarChart3, CalendarClock, Download, FileUp, KeyRound, Plus, RefreshCw, Trash2, Users } from 'lucide-react';
 import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { api } from '../api';
 import type { Baby, BabyEvent, Insights, User } from '../types';
+import DeviceAlerts from './DeviceAlerts';
 
 type Tab = 'overview' | 'caregivers' | 'babies' | 'schedules' | 'settings' | 'history';
 const number = (value: number, digits = 1) => value.toFixed(digits).replace(/\.0$/, '');
-
-function applicationServerKey(value: string) {
-  const padding = '='.repeat((4 - value.length % 4) % 4);
-  const raw = atob((value + padding).replace(/-/g, '+').replace(/_/g, '/'));
-  return Uint8Array.from([...raw].map((character) => character.charCodeAt(0)));
-}
 
 export default function Admin({ currentUser, initialBabies, onBack, onChanged }: { currentUser: User; initialBabies: Baby[]; onBack: () => void; onChanged: () => void }) {
   const [tab, setTab] = useState<Tab>(currentUser.mustChangePassword ? 'settings' : 'overview');
@@ -173,34 +168,4 @@ function Settings({ setMessage, onChanged }: { setMessage: (message: string) => 
     finally { setAiBusy(false); }
   }
   return <section className="grid gap-5 lg:grid-cols-2"><DeviceAlerts setMessage={setMessage} /><form onSubmit={changePassword} className="card rounded-3xl bg-white p-5"><h2 className="text-xl font-black">Change recovery password</h2><label className="mt-4 block font-bold">Current password<input type="password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} autoComplete="current-password" className="mt-1 h-14 w-full rounded-xl border-2 border-stone-200 px-3" /></label><label className="mt-3 block font-bold">New password<input type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} minLength={12} autoComplete="new-password" className="mt-1 h-14 w-full rounded-xl border-2 border-stone-200 px-3" /></label><button className="tap mt-4 w-full rounded-xl bg-[#4f7b68] font-black text-white">Change password</button></form><div className="card rounded-3xl bg-white p-5"><h2 className="text-xl font-black">Face ID or passkey</h2><p className="mt-2 text-stone-600">Register this phone or computer for quick, secure admin sign-in.</p><button onClick={addPasskey} className="tap mt-5 w-full rounded-xl border-2 border-[#4f7b68] font-black text-[#4f7b68]"><KeyRound className="mr-2 inline" />Add a passkey</button></div><div className="card rounded-3xl bg-white p-5 lg:col-span-2"><h2 className="text-xl font-black">AI privacy</h2><p className="mt-2 max-w-3xl text-stone-600">Control hosted AI insights, natural-language interpretation, and voice transcription for this household. Simple typed activity logging and every one-tap button keep working when this is off.</p><div className="mt-5 flex flex-wrap items-center justify-between gap-4 rounded-2xl bg-stone-50 p-4"><div><p className="font-black">AI features</p><p className="text-sm text-stone-500">{aiEnabled === undefined ? 'Checking current setting…' : aiEnabled ? 'Enabled for this household' : 'Disabled for this household'}</p></div><button type="button" onClick={toggleAi} disabled={aiBusy || aiEnabled === undefined} aria-pressed={aiEnabled === true} className={`min-h-12 min-w-24 rounded-full px-5 font-black disabled:opacity-50 ${aiEnabled ? 'bg-[#4f7b68] text-white' : 'bg-stone-200 text-stone-800'}`}>{aiBusy ? 'Saving…' : aiEnabled ? 'On' : 'Off'}</button></div><p className="mt-3 text-sm text-stone-500">Only an admin can change this household-wide setting. Provider choices and billing are intentionally not exposed yet.</p></div></section>;
-}
-
-function DeviceAlerts({ setMessage }: { setMessage: (message: string) => void }) {
-  const [enabled, setEnabled] = useState(false);
-  const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
-    navigator.serviceWorker.ready.then((registration) => registration.pushManager.getSubscription()).then((subscription) => setEnabled(Boolean(subscription))).catch(() => undefined);
-  }, []);
-  async function toggle() {
-    setBusy(true);
-    try {
-      if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) throw new Error('Install Leo Logger to your home screen first, then reopen it to enable alerts.');
-      const registration = await navigator.serviceWorker.ready;
-      const current = await registration.pushManager.getSubscription();
-      if (current) {
-        await api.delete('/api/reminders/subscribe', { endpoint: current.endpoint });
-        await current.unsubscribe(); setEnabled(false); setMessage('Feed and timer alerts turned off on this device.'); return;
-      }
-      const permission = await Notification.requestPermission();
-      if (permission !== 'granted') throw new Error('Notifications were not allowed. You can enable them in your phone settings.');
-      const config = await api.get<{ configured: boolean; publicKey: string | null }>('/api/reminders/config');
-      if (!config.configured || !config.publicKey) throw new Error('Alerts are not available yet.');
-      const subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: applicationServerKey(config.publicKey) });
-      await api.post('/api/reminders/subscribe', subscription.toJSON());
-      setEnabled(true); setMessage('Feed and timer alerts enabled on this device.');
-    } catch (reason) { setMessage((reason as Error).message); }
-    finally { setBusy(false); }
-  }
-  return <div className="card rounded-3xl bg-white p-5"><h2 className="text-xl font-black">Alerts on this device</h2><p className="mt-2 text-stone-600">Get background notifications when a feed is due and when the upright timer finishes.</p><button type="button" onClick={toggle} disabled={busy} aria-pressed={enabled} className={`tap mt-5 flex w-full items-center justify-center gap-2 rounded-xl font-black disabled:opacity-50 ${enabled ? 'bg-[#4f7b68] text-white' : 'bg-stone-100 text-stone-800'}`}>{enabled ? <Bell size={20} /> : <BellOff size={20} />}{busy ? 'Saving…' : enabled ? 'Alerts are on' : 'Turn on alerts'}</button><p className="mt-2 text-sm text-stone-500">Set this separately on each phone or tablet. When enabled, the feeding reminder also appears on Home.</p></div>;
 }

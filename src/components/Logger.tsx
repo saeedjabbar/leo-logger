@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Baby as BabyIcon, BedDouble, Bell, Droplets, LogOut, MessageCircle, Milk, Pencil, RefreshCw, Settings, Sparkles, Timer, X } from 'lucide-react';
+import { Baby as BabyIcon, BedDouble, Bell, Droplets, MessageCircle, Milk, Pencil, RefreshCw, Settings, Sparkles, Timer } from 'lucide-react';
 import { api } from '../api';
 import { feedCountdownLabel } from '../feedCountdown';
 import { flushEvents, queueEvent } from '../offline';
@@ -10,6 +10,7 @@ import FeedSheet from './FeedSheet';
 const ChatLogger = lazy(() => import('./ChatLogger'));
 const EventEditSheet = lazy(() => import('./EventEditSheet'));
 const BabyProfileSheet = lazy(() => import('./BabyProfileSheet'));
+const CaregiverSettingsSheet = lazy(() => import('./CaregiverSettingsSheet'));
 
 function eventLabel(event: BabyEvent) {
   if (event.type === 'feed') return `${event.feed?.ounces ?? '?'} oz ${event.feed?.source.replace('_', ' ')}`;
@@ -42,7 +43,7 @@ function RecentActivityRow({ event, person, editable, onEdit, divider }: { event
   return editable ? <button type="button" onClick={onEdit} className={`${className} hover:bg-stone-50 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[#4f7b68]`} aria-label={`Edit ${eventLabel(event)}, logged ${ago(event.startAt)}`}>{content}</button> : <div className={className}>{content}</div>;
 }
 
-export default function Logger({ user, babies, initialSleep, aiEnabled, onAdmin, onLogout, onBabyChanged }: { user: User; babies: Baby[]; initialSleep?: BabyEvent; aiEnabled: boolean; onAdmin: () => void; onLogout: () => void; onBabyChanged: (baby: Baby) => void }) {
+export default function Logger({ user, babies, initialSleep, aiEnabled, onAdmin, onLogout, onBabyChanged, onUserChanged }: { user: User; babies: Baby[]; initialSleep?: BabyEvent; aiEnabled: boolean; onAdmin: () => void; onLogout: () => void; onBabyChanged: (baby: Baby) => void; onUserChanged: (user: User) => void }) {
   const [babyId, setBabyId] = useState(user.defaultBabyId || babies[0]?.id);
   const [events, setEvents] = useState<BabyEvent[]>([]);
   const [people, setPeople] = useState<Record<string, string>>({});
@@ -221,7 +222,7 @@ export default function Logger({ user, babies, initialSleep, aiEnabled, onAdmin,
     </div><button disabled={busy} onClick={() => log({ type: 'diaper', diaper: 'both' }, 'Pee + poop')} className="tap card mt-3 flex w-full items-center justify-center gap-3 rounded-2xl bg-white text-lg font-black"><Droplets className="text-[#58a7d1]" /><span>Pee + Poop</span><Sparkles className="text-[#a8794f]" /></button></section>
     <section className="mt-7 mb-20"><div className="mb-3"><h2 className="text-xl font-black">Recent activity</h2><p className="text-sm text-stone-500">Tap one of your entries—or its time—to edit or delete it.</p></div><div className="card overflow-hidden rounded-3xl bg-white">{recent.length ? recent.map((event, index) => <RecentActivityRow key={event.id} event={event} person={people[event.createdBy] || 'Caregiver'} editable={user.role === 'admin' || event.createdBy === user.id} onEdit={() => setEditing(event)} divider={Boolean(index)} />) : <p className="p-6 text-center text-stone-500">No activity logged yet.</p>}</div></section>
     {!chatOpen && !editing && !feedOpen && !profileOpen && !settingsOpen ? <button type="button" onClick={() => setChatOpen(true)} className="fixed right-4 z-30 grid size-16 place-items-center rounded-full bg-[#322b26] text-white shadow-xl transition-transform active:scale-95" style={{ bottom: 'max(1rem, env(safe-area-inset-bottom))' }} aria-label="Tell Leo Logger"><MessageCircle size={30} aria-hidden="true" /></button> : null}
-    {settingsOpen ? <div className="fixed inset-0 z-50 flex items-end bg-black/40 p-3 sm:items-center sm:justify-center" role="dialog" aria-modal="true" aria-labelledby="home-settings-title" onMouseDown={(event) => { if (event.target === event.currentTarget) setSettingsOpen(false); }}><section className="safe-bottom w-full max-w-md rounded-3xl bg-white p-5 shadow-2xl"><div className="flex items-center justify-between gap-3"><div><p className="text-sm font-bold uppercase tracking-wider text-[#4f7b68]">Account</p><h2 id="home-settings-title" className="text-2xl font-black">Settings</h2></div><button type="button" onClick={() => setSettingsOpen(false)} className="grid size-12 place-items-center rounded-full bg-stone-100" aria-label="Close settings"><X /></button></div>{user.role === 'admin' ? <button type="button" onClick={() => { setSettingsOpen(false); onAdmin(); }} className="tap mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-[#4f7b68] font-black text-white"><Settings size={20} />Caregiver dashboard and settings</button> : null}<button type="button" onClick={onLogout} className="tap mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-stone-100 font-black text-red-700"><LogOut size={20} />Sign out</button></section></div> : null}
+    {settingsOpen ? <Suspense fallback={null}><CaregiverSettingsSheet user={user} onClose={() => setSettingsOpen(false)} onAdmin={onAdmin} onLogout={onLogout} onUserChanged={onUserChanged} onAlertsChanged={setRemindersEnabled} /></Suspense> : null}
     {feedOpen ? <FeedSheet busy={busy} onClose={() => setFeedOpen(false)} onSave={(feed) => log({ type: 'feed', feed }, `${feed.ounces} oz feed`)} /> : null}
     {chatOpen && baby ? <Suspense fallback={null}><ChatLogger baby={baby} aiEnabled={aiEnabled} onClose={() => setChatOpen(false)} onLogged={() => { refresh(); setCaregiverInsight(''); setNotice('Activity logged from chat'); }} /></Suspense> : null}
     {editing ? <Suspense fallback={null}><EventEditSheet event={editing} onClose={() => setEditing(undefined)} onUpdated={(updated) => { setEvents((current) => current.map((item) => item.id === updated.id ? updated : item).sort((a, b) => b.startAt.localeCompare(a.startAt))); if (updated.type === 'sleep') setActiveSleep(updated.endAt ? undefined : updated); setEditing(undefined); setCaregiverInsight(''); setNotice('Activity updated'); }} onDeleted={(deleted) => { setEvents((current) => current.filter((item) => item.id !== deleted.id)); if (deleted.id === activeSleep?.id) setActiveSleep(undefined); setEditing(undefined); setCaregiverInsight(''); setNotice('Activity deleted'); }} /></Suspense> : null}
