@@ -5,6 +5,7 @@
 Leo Logger is a TypeScript PWA with a React/Vite client and Express backend.
 
 - `src/`: client entry points, shared types, API helpers, offline support, and React components.
+- `mobile/`: Expo/React Native client scaffold for native iOS and Android work.
 - `server/`: API routes and domain modules for authentication, events, reminders, analytics, AI, speech, and storage.
 - `public/`: PWA manifest, service worker, and app icons.
 - `infra/`: Azure provisioning and Alexa configuration scripts.
